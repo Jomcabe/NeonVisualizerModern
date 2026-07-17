@@ -25,7 +25,7 @@ const state = {
   brightness: 0.35,
   bloom: 1.1,
   trails: 0.7,
-  autoCycle: false,
+  autoCycle: true,
   showLyrics: true
 };
 
@@ -145,11 +145,19 @@ window.addEventListener('mousemove', () => {
   }, 2800);
 });
 
-// ---- Auto-cycle palettes ----
+// ---- Auto-cycle palettes and modes (like the original Neon) ----
+let cycleTick = 0;
 setInterval(() => {
   if (!state.autoCycle) return;
+  cycleTick++;
   state.palette = (state.palette + 1) % PALETTES.length;
   paletteSel.value = state.palette;
+  // Every other tick, switch visual mode too; the feedback trails carry over,
+  // so the handoff reads as a morph rather than a hard cut.
+  if (cycleTick % 2 === 0) {
+    state.mode = state.mode === 'ribbons' ? 'tunnel' : 'ribbons';
+    syncModeButtons();
+  }
 }, 18000);
 
 // ---- Now playing ----
