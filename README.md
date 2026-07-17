@@ -77,6 +77,17 @@ xattr -cr /Applications/Newon.app
 
 Then launch with right-click → Open as usual.
 
+### Reacting to the microphone instead of Spotify
+
+Newon needs **Screen Recording** permission for system-audio loopback; without
+it, Start Listening silently falls back to the mic. macOS ties that grant to
+the app's code signature, so **updating/rebuilding Newon can revoke it** even
+if you approved it before — Newon now detects this and shows a banner with a
+button straight to **System Settings → Privacy & Security → Screen
+Recording**. Toggle Newon on (or off and back on) there, then **fully quit and
+relaunch** the app — permission changes don't apply to an already-running
+process.
+
 ---
 
 ## Run from source / develop

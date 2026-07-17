@@ -23,6 +23,13 @@
   <!-- Synced lyric line, sprinkled at the bottom -->
   <div id="lyric" class="hidden"></div>
 
+  <!-- Surfaces when Screen Recording isn't granted, so mic fallback is never silent -->
+  <div id="permHint" class="hidden">
+    <span id="permHint-msg"></span>
+    <button id="permHint-btn">Open Settings</button>
+    <button id="permHint-close" title="Dismiss">✕</button>
+  </div>
+
   <!-- Start gate: system-audio capture needs a user gesture -->
   <div id="gate">
     <div class="gate-card">

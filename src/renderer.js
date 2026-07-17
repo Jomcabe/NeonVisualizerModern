@@ -46,24 +46,33 @@ startBtn.addEventListener('click', async () => {
   startBtn.disabled = true;
   startBtn.textContent = 'Connecting…';
   try {
-    let stream;
-    try {
-      // System-audio loopback (main.js supplies the source + audio:'loopback').
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    } catch (err) {
-      // Fallback: microphone (still lets the visuals react to speaker sound).
+    // Ask macOS directly instead of guessing from a caught error — that way
+    // a denied/not-yet-granted Screen Recording permission is reported as
+    // what it is, rather than silently swapped for the microphone.
+    const access = window.newon ? await window.newon.checkScreenAccess() : 'granted';
+    let stream = null;
+    if (access === 'granted') {
+      try {
+        // System-audio loopback (main.js supplies the source + audio:'loopback').
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      } catch (err) {
+        // Granted but the capture itself failed (e.g. user cancelled the
+        // picker) — fall through to mic below.
+      }
+    }
+    if (!stream) {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     }
     await audio.start(stream);
     gate.classList.add('hidden');
     pinGearBriefly();
+    if (access !== 'granted') {
+      showPermissionHint(access);
+    }
   } catch (err) {
     startBtn.disabled = false;
     startBtn.textContent = 'Start Listening';
-    showGateError(
-      'Could not capture audio. Grant Newon permission under System Settings → ' +
-      'Privacy & Security → Screen Recording, then try again. (' + err.message + ')'
-    );
+    showGateError('Could not capture any audio. (' + err.message + ')');
   }
 });
 
@@ -72,6 +81,24 @@ function showGateError(msg) {
   el.textContent = msg;
   el.classList.remove('hidden');
 }
+
+// Persistent banner (not just the one-time gate) — Spotify audio needs
+// Screen Recording, and macOS often re-revokes it after a rebuild/update,
+// so this can resurface long after the first launch.
+function showPermissionHint(access) {
+  const el = document.getElementById('permHint');
+  const msg = access === 'denied'
+    ? 'Screen Recording permission is denied, so Newon is using your microphone instead of Spotify directly.'
+    : 'Newon needs Screen Recording permission to hear Spotify directly. Using the microphone for now.';
+  document.getElementById('permHint-msg').textContent = msg;
+  el.classList.remove('hidden');
+}
+document.getElementById('permHint-btn').addEventListener('click', () => {
+  window.newon && window.newon.openScreenRecordingSettings();
+});
+document.getElementById('permHint-close').addEventListener('click', () => {
+  document.getElementById('permHint').classList.add('hidden');
+});
 
 // ---- Controls panel ----
 const panel = document.getElementById('panel');
