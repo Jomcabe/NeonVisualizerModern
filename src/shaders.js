@@ -54,40 +54,61 @@ vec3 pal(float t){
 // kaleidoscope mirror and slowly rotating. Kept sparse and bright on black —
 // the feedback pass turns these into the flowing, melting Neon light-forms.
 const FRAG_RIBBONS = SCENE_HEADER + `
-void main(){
-  vec2 uv = vUv * 2.0 - 1.0;
-  uv.x *= uResolution.x / uResolution.y;
-
-  float bass = uBass * uSensitivity;
-  float mid  = uMid  * uSensitivity;
-  float treb = uTreble * uSensitivity;
+// One Neon "shape": v selects fold count and filament style (linear waveform
+// filaments vs. a waveform-modulated ring), so the visualizer cycles through
+// distinct looks the way the original did.
+vec3 shape(vec2 uv, float v, float bass, float treb){
   float t = uTime;
-
   // Slow, wandering global rotation so the feedback trails swirl.
   vec2 p = rot(t * 0.11 + sin(t * 0.047) * 0.9) * uv;
 
-  // Kaleidoscope fold — the Neon radial symmetry.
-  float k = 6.28318 / 4.0;
+  // Kaleidoscope fold — fold count varies per shape.
+  float folds = v < 0.5 ? 4.0 : (v < 1.5 ? 6.0 : (v < 2.5 ? 2.0 : 3.0));
+  bool ringStyle = (v > 0.5 && v < 1.5) || v > 2.5;
+  float k = 6.28318 / folds;
   float ang = atan(p.y, p.x);
   float rad = length(p);
-  ang = abs(mod(ang, k) - k * 0.5);
-  p = vec2(cos(ang), sin(ang)) * rad;
+  float fang = abs(mod(ang, k) - k * 0.5);
+  p = vec2(cos(fang), sin(fang)) * rad;
 
   vec3 col = vec3(0.0);
   for(int i = 0; i < 3; i++){
     float fi = float(i);
-    // Each filament reads a different shifted window of the live waveform.
-    float x = p.x * 0.30 + fi * 0.37 + t * 0.035;
     float amp = 0.16 + bass * 0.55 + uBeat * 0.18;
-    float y = wavS(x) * amp
-            + sin(t * (0.33 + fi * 0.13) + fi * 2.1) * 0.34;   // slow drift
-    float d = p.y - y;
+    float x, d;
+    if (ringStyle) {
+      // Ring whose radius ripples with the waveform — folds make petals.
+      x = fang * folds * 0.159 + fi * 0.37 + t * 0.035;
+      float r0 = 0.38 + fi * 0.16 + sin(t * (0.27 + fi * 0.11)) * 0.12;
+      d = rad - (r0 + wavS(x) * amp * 0.7);
+    } else {
+      // Each filament reads a different shifted window of the live waveform.
+      x = p.x * 0.30 + fi * 0.37 + t * 0.035;
+      d = p.y - (wavS(x) * amp + sin(t * (0.33 + fi * 0.13) + fi * 2.1) * 0.34);
+    }
     float core = exp(-d * d * (1500.0 + treb * 2500.0));  // thin bright core
     float halo = exp(-d * d * 70.0) * 0.10;               // soft aura
     // Hue cycles slowly and globally (per-filament offsets stay small) so
     // overlapping trails reinforce one color instead of averaging to gray.
     col += pal(x * 0.15 + t * 0.045 + fi * 0.09) * (core * (0.8 + treb * 0.8) + halo);
   }
+  return col;
+}
+
+void main(){
+  vec2 uv = vUv * 2.0 - 1.0;
+  uv.x *= uResolution.x / uResolution.y;
+
+  float bass = uBass * uSensitivity;
+  float treb = uTreble * uSensitivity;
+
+  // Cycle through the 4 shapes, crossfading over the last 20% of each cycle
+  // (the feedback trails smooth the handoff further).
+  float cyc = uTime / 30.0;
+  float v0 = mod(floor(cyc), 4.0);
+  float f = smoothstep(0.8, 1.0, fract(cyc));
+  vec3 col = mix(shape(uv, v0, bass, treb),
+                 shape(uv, mod(v0 + 1.0, 4.0), bass, treb), f);
 
   // Audio drives the energy fed into the feedback loop.
   col *= 0.22 + uLevel * 1.2 + uBeat * 0.5;
