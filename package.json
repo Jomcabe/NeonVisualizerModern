@@ -23,6 +23,7 @@
   },
   "build": {
     "appId": "com.jomcabe.newon",
+    "afterPack": "scripts/adhoc-sign.js",
     "productName": "Newon",
     "copyright": "Copyright © 2026 jomcabe",
     "files": [

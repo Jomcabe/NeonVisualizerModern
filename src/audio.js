@@ -16,6 +16,8 @@ class AudioEngine {
     this.mid = 0;
     this.treble = 0;
     this.beat = 0;
+    // Time-domain waveform (128 = silence) — drawn directly by the shaders.
+    this.wave = new Uint8Array(2048).fill(128);
 
     this._bassAvg = 0;      // running average of bass energy
     this._beatCooldown = 0; // frames since last beat
@@ -45,6 +47,7 @@ class AudioEngine {
     this.analyser.smoothingTimeConstant = 0.75;
     this.source.connect(this.analyser);
     this.freq = new Uint8Array(this.analyser.frequencyBinCount);
+    this.wave = new Uint8Array(this.analyser.fftSize).fill(128);
   }
 
   stop() {
@@ -67,6 +70,7 @@ class AudioEngine {
   update() {
     if (!this.analyser) return this;
     this.analyser.getByteFrequencyData(this.freq);
+    this.analyser.getByteTimeDomainData(this.wave);
     const n = this.freq.length; // 1024 bins over ~0..22kHz
 
     const bass = this._band(1, Math.floor(n * 0.06));      // ~20-260 Hz

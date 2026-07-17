@@ -24,6 +24,7 @@ const state = {
   sensitivity: 1.1,
   brightness: 0.35,
   bloom: 1.1,
+  trails: 0.7,
   autoCycle: false,
   showLyrics: true
 };
@@ -97,6 +98,7 @@ paletteSel.addEventListener('change', () => (state.palette = +paletteSel.value))
 bindSlider('sensitivity');
 bindSlider('brightness');
 bindSlider('bloom');
+bindSlider('trails');
 function bindSlider(id) {
   const el = document.getElementById(id);
   el.addEventListener('input', () => (state[id] = +el.value));
@@ -263,16 +265,25 @@ function frame() {
     viz.resize();
     audio.update();
     const p = PALETTES[state.palette];
+    const t = (performance.now() - start) / 1000;
     viz.render(state.mode, {
-      time: (performance.now() - start) / 1000,
+      time: t,
       level: audio.level,
       bass: audio.bass,
       mid: audio.mid,
       treble: audio.treble,
       beat: audio.beat,
+      wave: audio.wave,
       sensitivity: state.sensitivity,
       brightness: state.brightness,
       bloom: state.bloom,
+      // Feedback-warp parameters (per frame, ~60fps): trails persistence,
+      // slow wandering rotation, and an outward zoom that surges on bass.
+      // The tunnel keeps shorter trails so its ring structure stays crisp.
+      decay: state.mode === 'tunnel' ? 0.62 + state.trails * 0.25 : 0.82 + state.trails * 0.16,
+      rot: Math.sin(t * 0.05) * 0.006 + audio.beat * 0.002,
+      zoom: 0.9945 - audio.bass * 0.006 - audio.beat * 0.004,
+      hueDrift: 0.012,
       colA: hex(p.a),
       colB: hex(p.b),
       colC: hex(p.c)

@@ -30,11 +30,11 @@ beat-reactive light show. No cables, no "share your screen" gymnastics — click
 | | |
 |---|---|
 | 🎧 **Hears your music** | Captures system audio via macOS ScreenCaptureKit loopback — reacts to Spotify, Apple Music, YouTube, anything. Falls back to the mic if needed. |
-| 🌈 **Neon ribbons + bloom** | The signature Xbox look: flowing, glowing light ribbons over black, warped by the music, with a real bloom glow pass. |
+| 🌈 **Neon light-forms + bloom** | The signature Xbox look: the live waveform drawn as glowing filaments, folded through kaleidoscope symmetry and run through a video-feedback loop — the same technique the original Neon used — so the light melts into flowing, hue-shifting trails. |
 | 🌀 **Kaleidoscope tunnel** | A second mode — a beat-reactive geometric tunnel that folds and pulses on the bass. |
 | 🎵 **Subtle now-playing** | Current track tucked in the corner (read straight from Spotify — no login). |
 | ✨ **Synced lyrics** | When available, the current lyric line is sprinkled in at the bottom, timed to playback (via [lrclib.net](https://lrclib.net)). |
-| 🎚 **Presets & sliders** | 7 neon palettes (incl. classic *Xbox Neon*), plus sensitivity, brightness, and glow sliders. Optional auto-cycle. |
+| 🎚 **Presets & sliders** | 7 neon palettes (incl. classic *Xbox Neon*), plus sensitivity, brightness, glow, and trail-length sliders. Optional auto-cycle. |
 
 ### Keyboard shortcuts
 
@@ -52,8 +52,9 @@ beat-reactive light show. No cables, no "share your screen" gymnastics — click
 1. Download the `.dmg` from the button above (or the
    [Releases page](https://github.com/jomcabe/neonvisualizermodern/releases/latest)).
 2. Open it and drag **Newon** into **Applications**.
-3. Because the app is unsigned (personal build), the first launch needs a
-   Gatekeeper bypass: **right-click Newon → Open → Open**.
+3. Because the app has no Apple Developer certificate (personal build, ad-hoc
+   signed), the first launch needs a Gatekeeper bypass:
+   **right-click Newon → Open → Open**.
 4. Click **Start Listening**. macOS will ask for **Screen Recording** permission —
    this is what lets Newon capture system audio. Approve it, then relaunch if asked.
 5. Play something in Spotify. 🎉
@@ -61,6 +62,20 @@ beat-reactive light show. No cables, no "share your screen" gymnastics — click
 > **Why Screen Recording?** macOS routes system-audio capture through the same
 > ScreenCaptureKit permission as screen recording. Newon never records or
 > transmits your screen — it only reads the audio.
+
+### "Newon is damaged and can't be opened"
+
+Builds downloaded before the app was ad-hoc signed were fully unsigned, and
+macOS reports quarantined unsigned apps as *damaged* (with no right-click
+bypass offered) — on Apple Silicon they won't launch at all. Grab the newest
+`.dmg` from Releases, or clear the quarantine flag on an already-installed
+copy:
+
+```bash
+xattr -cr /Applications/Newon.app
+```
+
+Then launch with right-click → Open as usual.
 
 ---
 
@@ -104,9 +119,9 @@ src/
 ├── preload.js    Safe context-bridge to the renderer
 ├── index.html    UI: canvas, now-playing, lyrics, controls
 ├── renderer.js   Orchestration: audio capture, palettes, UI, lyric sync, loop
-├── audio.js      Web Audio analyser → smoothed bass/mid/treble/level + beats
-├── gl.js         WebGL2 pipeline: scene → bright-pass → blur → bloom composite
-└── shaders.js    GLSL: ribbons, tunnel, and the bloom post shaders
+├── audio.js      Web Audio analyser → waveform + smoothed bass/mid/treble/level + beats
+├── gl.js         WebGL2 pipeline: scene → feedback trails → bright-pass → blur → bloom
+└── shaders.js    GLSL: neon light-forms, tunnel, video feedback, bloom post shaders
 ```
 
 No runtime dependencies beyond Electron — the visuals are hand-written WebGL2,
