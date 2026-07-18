@@ -437,18 +437,18 @@ function makeGenes() {
     kx: 0.45 + r() * 1.05,                 // Kali IFS offset — the fractal's
     ky: 0.45 + r() * 1.05,                 // whole character lives in these
     kz: 0.35 + r() * 0.85,
-    twist: (r() * 2 - 1) * 1.4,            // corkscrew along the track
-    warp: 0.2 + r() * 1.0,                 // liquid domain-warp amount
+    twist: (r() * 2 - 1) * 0.9,            // corkscrew along the track
+    warp: 0.2 + r() * 0.8,                 // liquid domain-warp amount
     radius: 1.15 + r() * 1.35,             // tunnel radius
     detail: 0.35 + r() * 1.05,             // fractal wall displacement
-    hueSpeed: 0.06 + r() * 0.22,
+    hueSpeed: 0.03 + r() * 0.10,           // slow melt, not a strobe
     huePhase: r(),
     shapeSize: 0.24 + r() * 0.42,          // floating-shape scale
     spread: 1.9 + r() * 2.3,               // spacing between floating shapes
-    spin: (r() * 2 - 1) * 2.2,             // shape tumble speed/direction
-    sway: (r() * 2 - 1) * 0.55,            // extra camera roll wander
-    shake: 0.25 + r() * 0.75,              // turbulence intensity
-    speed: 1.6 + r() * 2.8                 // base ride speed
+    spin: (r() * 2 - 1) * 1.2,             // shape tumble speed/direction
+    sway: (r() * 2 - 1) * 0.45,            // extra camera roll wander
+    shake: 0.1 + r() * 0.35,               // float intensity (kept tiny)
+    speed: 1.0 + r() * 1.2                 // base ride speed
   };
 }
 
@@ -468,8 +468,8 @@ window.addEventListener('resize', () => viz && viz.resize());
 const start = performance.now();
 let camDist = 0;                    // distance travelled along the ride
 let lastFrameT = 0;
-let rotDir = 1;                     // trail-spin direction, flipped by hi-hats
-let prevTrebBeat = 0;
+let rotDir = 1;                     // trail-spin direction (eased, not snapped)
+let rotDirTarget = 1;
 
 // ---- Motion choreography ----
 // The ride is a sequence of smooth manoeuvres, not a constant forward push:
@@ -487,14 +487,14 @@ const motion = {
 };
 function chooseMove(t) {
   const r = Math.random();
-  if (r < 0.14) motion.velTarget = -(0.5 + Math.random() * 0.9);   // pull back
-  else if (r < 0.32) motion.velTarget = 0.35 + Math.random() * 0.5; // slow drift
-  else motion.velTarget = 1.1 + Math.random() * 1.4;                // cruise/rush
+  if (r < 0.14) motion.velTarget = -(0.35 + Math.random() * 0.5);   // pull back
+  else if (r < 0.34) motion.velTarget = 0.25 + Math.random() * 0.35; // slow drift
+  else motion.velTarget = 0.7 + Math.random() * 0.8;                 // cruise
   const s = Math.random();
-  motion.spinVelTarget = s < 0.3 ? 0 : (Math.random() * 2 - 1) * 0.45;
-  motion.yawTarget = Math.random() < 0.45 ? 0 : (Math.random() * 2 - 1) * 0.4;
-  motion.pitchTarget = Math.random() < 0.55 ? 0 : (Math.random() * 2 - 1) * 0.25;
-  motion.next = t + 4.5 + Math.random() * 5;
+  motion.spinVelTarget = s < 0.35 ? 0 : (Math.random() * 2 - 1) * 0.28;
+  motion.yawTarget = Math.random() < 0.45 ? 0 : (Math.random() * 2 - 1) * 0.3;
+  motion.pitchTarget = Math.random() < 0.55 ? 0 : (Math.random() * 2 - 1) * 0.18;
+  motion.next = t + 8 + Math.random() * 7;   // manoeuvres last, they don't churn
 }
 function frame() {
   if (viz) {
@@ -506,22 +506,17 @@ function frame() {
     const dt = Math.min(Math.max(t - lastFrameT, 0), 0.05);
     lastFrameT = t;
 
-    if (audio.trebBeat >= 1 && prevTrebBeat < 1) rotDir = -rotDir;
-    prevTrebBeat = audio.trebBeat;
-
     // Mutate the DNA the way projectM does hard preset cuts: when the MUSIC
     // changes character (a drop, a chorus, the beat coming in), the visuals
-    // slam into a new form. The timer is only a fallback for silence.
-    if (audio.section) rerollGenes();
-    else if (t > nextRoll) rerollGenes();
-    // Strong onsets nudge the DNA mid-form — small twist/hue mutations so the
-    // picture keeps evolving with the percussion between section changes.
-    if (audio.onset >= 1 && Math.random() < 0.35) {
-      geneTarget.twist += (Math.random() - 0.5) * 0.5;
-      geneTarget.huePhase = (geneTarget.huePhase + (Math.random() - 0.3) * 0.12) % 1;
-      geneTarget.spin += (Math.random() - 0.5) * 0.6;
+    // morph into a new form. The timer is only a fallback for silence. The
+    // trail-spin direction may flip here too — but it EASES around, it never
+    // snaps (per-hit flipping read as jitter, not rhythm).
+    if (audio.section || t > nextRoll) {
+      rerollGenes();
+      if (Math.random() < 0.5) rotDirTarget = -rotDirTarget;
     }
-    const ease = 1 - Math.exp(-dt * 0.5);   // ~2s half-life morph
+    rotDir += (rotDirTarget - rotDir) * (1 - Math.exp(-dt * 0.6));
+    const ease = 1 - Math.exp(-dt * 0.35);  // slow, liquid morph
     for (const k in genes) {
       if (k !== 'folds') genes[k] += (geneTarget[k] - genes[k]) * ease;
     }
@@ -530,7 +525,7 @@ function frame() {
     // the cruise, loudness opens it up, kicks punch it — but the manoeuvre
     // decides the direction and character of the motion.
     if (audio.section || t > motion.next) chooseMove(t);
-    const mEase = 1 - Math.exp(-dt * 0.55);   // ~1.8s time constant
+    const mEase = 1 - Math.exp(-dt * 0.35);   // ~3s time constant — it glides
     motion.vel += (motion.velTarget - motion.vel) * mEase;
     motion.spinVel += (motion.spinVelTarget - motion.spinVel) * mEase;
     motion.yaw += (motion.yawTarget - motion.yaw) * mEase * 0.7;
@@ -539,9 +534,9 @@ function frame() {
     const tempo = audio.bpm / 120;
     // Kicks only push when travelling forward — a backwards pull should feel
     // like being drawn back, not fought over.
-    const punch = motion.vel > 0 ? audio.bass * 2.2 + audio.beat * 1.4 : 0;
+    const punch = motion.vel > 0 ? audio.bass * 1.3 + audio.beat * 0.7 : 0;
     camDist += dt * (motion.vel * (0.7 + genes.speed * 0.35) * tempo
-                     * (0.45 + audio.level * 1.6) + punch);
+                     * (0.45 + audio.level * 1.3) + punch);
 
     viz.render(state.mode, {
       time: t,
@@ -564,7 +559,7 @@ function frame() {
       aud1: [audio.centroid, audio.flux, audio.onset, audio.trebBeat],
       motion: [motion.spin, motion.yaw, motion.pitch, 0],
       // Chromatic-aberration kick in the composite — the lens smears on hits.
-      shift: Math.min(audio.bass * 0.8 + audio.beat * 0.8, 1.5),
+      shift: Math.min(audio.bass * 0.5 + audio.beat * 0.4, 1.0),
       // Feedback-warp parameters (per frame, ~60fps). This is the heart of the
       // Neon look. A slow zoom LFO makes the picture surge inward (>1, diving
       // INTO the tunnel) then pull back — the rollercoaster rush — with bass and
@@ -572,24 +567,24 @@ function frame() {
       // corkscrew, and a strong hue drift rainbows them (60s video-feedback).
       // Flight supplies its own camera motion, so its feedback stays short and
       // near-static — just enough afterglow to melt the frames together.
-      decay: state.mode === 'flight' ? 0.60 + state.trails * 0.24
+      decay: state.mode === 'flight' ? 0.68 + state.trails * 0.22
            : state.mode === 'tunnel' ? 0.70 + state.trails * 0.22
            : 0.86 + state.trails * 0.11,
       // Hi-hats flip the trail-spin direction (MilkDrop's rot-on-beat trick);
       // the spin cadence itself follows the tempo.
       rot: state.mode === 'flight'
-           ? (Math.sin(t * 0.11) * 0.004 + audio.beat * 0.010) * rotDir * tempo
-           : (Math.sin(t * 0.06) * 0.02 + Math.sin(t * 0.017) * 0.02 + audio.beat * 0.03
+           ? (Math.sin(t * 0.11) * 0.004 + audio.beat * 0.004) * rotDir * tempo
+           : (Math.sin(t * 0.06) * 0.02 + Math.sin(t * 0.017) * 0.02 + audio.beat * 0.02
              + (state.mode === 'tunnel' ? 0.012 : 0.005)) * rotDir,
       // Base < 1 (drifting outward) + a rush LFO that periodically crosses 1.0
       // to dive in; bass/beat pull you deeper still.
       zoom: state.mode === 'flight'
-            ? 0.997 - audio.beat * 0.006
+            ? 0.9975 - audio.beat * 0.003
             : (state.mode === 'tunnel' ? 0.984 : 0.992)
               + Math.sin(t * 0.13) * 0.016 - 0.006
               - audio.bass * 0.030 - audio.beat * 0.022,
-      // Trail hues melt faster when the top end sizzles.
-      hueDrift: 0.02 + audio.treble * 0.06,
+      // Trail hues melt faster when the top end sizzles — slow base drift.
+      hueDrift: 0.012 + audio.treble * 0.04,
       colA: hex(p.a),
       colB: hex(p.b),
       colC: hex(p.c)
