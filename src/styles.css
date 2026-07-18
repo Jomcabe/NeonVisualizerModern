@@ -182,6 +182,9 @@ body:hover #gear, #gear.pinned { opacity: 0.8; }
 .panel-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .panel-label { font-size: 12px; opacity: 0.6; }
 .seg { display: flex; background: rgba(255, 255, 255, 0.06); border-radius: 10px; padding: 2px; }
+.seg.wrap { flex-wrap: wrap; gap: 2px; }
+.mode-row { flex-direction: column; align-items: stretch; gap: 8px; }
+.seg.wrap button { flex: 1 1 28%; text-align: center; }
 .seg button {
   border: none; background: transparent; color: var(--ui);
   padding: 6px 12px; font-size: 12px; border-radius: 8px; cursor: pointer;

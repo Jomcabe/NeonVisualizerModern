@@ -54,134 +54,128 @@ vec3 spectrum(float t){
 }
 `;
 
-// ---- Mode 1: "Neon" — a swarm of particle light-forms -----------------------
-// The real Neon lightsynth builds its look from clouds of bright *point* sprites
-// (not vector lines), color-cycled across the spectrum and folded through
-// kaleidoscope symmetry. Each particle rides a golden-angle spiral whose radius
-// is pushed by the live waveform + bass. Drawn sparse and bright on black; the
-// feedback pass then pulls the points into flowing, recursive light-tunnels.
-const FRAG_NEON = SCENE_HEADER + `
-// Fold a point through n-fold kaleidoscope symmetry. Returns folded xy + radius.
-vec3 kfold(vec2 p, float folds){
-  float k = 6.28318 / folds;
-  float a = atan(p.y, p.x);
-  float r = length(p);
-  a = abs(mod(a, k) - k * 0.5);
-  return vec3(cos(a) * r, sin(a) * r, r);
+// ---- Unified modular scene --------------------------------------------------
+// Instead of one mode at a time, SEVERAL layers run simultaneously and their
+// weights drift with uStyle (a continuous float, not an index). Switching mode
+// or auto-cycling just eases uStyle, so every change is a smooth MORPH and there
+// is always more than one thing on screen — no single centered shape, no rigid
+// symmetry, constant asymmetric motion. This mirrors how the real Neon layers
+// modular generators.
+const FRAG_SCENE = SCENE_HEADER + `
+uniform float uStyle;   // continuous style position, wraps over NSTYLES=5
+
+// Triangular, wrapping weight for style k on the ring of 5 styles.
+float styleW(float k){
+  float m = mod(uStyle, 5.0);
+  float d = abs(m - k);
+  d = min(d, 5.0 - d);
+  return smoothstep(1.0, 0.0, d);
+}
+// Cheap flowing direction (no fbm) so the particle loop stays fast.
+vec2 flow2(float fi, float t){
+  float a = sin(fi * 1.7 + t * 0.35) * 2.3 + cos(fi * 0.9 - t * 0.22) * 1.7;
+  return vec2(cos(a), sin(a));
 }
 
 void main(){
   vec2 uv = vUv * 2.0 - 1.0;
-  uv.x *= uResolution.x / uResolution.y;
+  float asp = uResolution.x / uResolution.y;
+  uv.x *= asp;
 
   float t    = uTime;
   float bass = uBass   * uSensitivity;
+  float mid  = uMid    * uSensitivity;
   float treb = uTreble * uSensitivity;
   float lvl  = uLevel  * uSensitivity;
 
-  // Slow global spin + bass-breathing zoom so the swarm surges with the music.
-  vec2 p = rot(t * 0.05 + sin(t * 0.021) * 0.6) * uv;
-  p *= 0.92 - bass * 0.22 - uBeat * 0.10;
+  float wSwarm  = 0.5 + styleW(0.0);   // always some swarm — the connective tissue
+  float wKaleid = styleW(1.0);
+  float wTunnel = styleW(2.0);
+  float wGrid   = styleW(3.0);
+  float wLiquid = styleW(4.0);
 
-  // Kaleidoscope petal count steps every ~10s (3,4,5,6-fold), like Neon's
-  // symmetry presets.
-  float folds = 3.0 + mod(floor(t / 10.0), 4.0);
-  vec3 fr = kfold(p, folds);
-  vec2 q = fr.xy;
+  // Working coordinate: gentle continuous spin (one direction — reads as flow,
+  // not rocking). Symmetry is LOOSE and only fades in for the Kaleido style, on
+  // a slowly rotating axis, so it never looks like a rigid centered mirror.
+  vec2 q = rot(t * 0.04) * uv;
+  {
+    float folds = 3.0 + mod(floor(t / 14.0), 3.0);      // 3..5
+    float k  = 6.28318 / folds;
+    float a  = atan(q.y, q.x) + t * 0.06;
+    float rr = length(q);
+    float fa = abs(mod(a, k) - k * 0.5);
+    vec2 sym = vec2(cos(fa + t * 0.06), sin(fa + t * 0.06)) * rr;
+    q = mix(q, sym, clamp(wKaleid, 0.0, 1.0) * 0.85);
+  }
 
-  // Liquid domain warp — fbm shoves the whole field around so it writhes and
-  // melts like a lava lamp. Bass makes the warp heave. This is what turns the
-  // clean swarm into the "on-mushrooms" molten look.
-  vec2 warp = vec2(fbm(q * 2.3 + t * 0.20),
-                   fbm(q * 2.3 - t * 0.15 + 7.0));
-  q += (warp - 0.5) * (0.30 + bass * 0.7);
+  // Liquid domain warp, centered on a DRIFTING off-center point so the motion
+  // never pivots around the middle. Stronger for the Liquid style + on bass.
+  vec2 c1 = vec2(sin(t * 0.11) * 0.7, cos(t * 0.09) * 0.6);
+  vec2 wv2 = vec2(fbm((q + c1) * 2.1 + t * 0.15),
+                  fbm((q + c1) * 2.1 - t * 0.12 + 9.0));
+  q += (wv2 - 0.5) * (0.35 + bass * 0.7 + wLiquid * 0.9);
+
   float rad = length(q);
-
   vec3 col = vec3(0.0);
 
-  // --- Plasma / moire underlay: soft rainbow interference behind everything ---
-  float plasma = sin(q.x * 6.0 + t)
-               + sin(q.y * 5.3 - t * 1.3)
-               + sin((q.x + q.y) * 4.7 + t * 0.7)
-               + fbm(q * 3.0 - t * 0.25) * 3.0;
-  col += spectrum(plasma * 0.09 + t * 0.05) * (0.10 + lvl * 0.35);
+  // --- Plasma rainbow underlay (full frame) ---
+  float pl = sin(q.x * 5.0 + t)
+           + sin(q.y * 4.3 - t * 1.2)
+           + sin((q.x - q.y) * 3.7 + t * 0.8)
+           + fbm(q * 2.5 - t * 0.2) * 3.0;
+  col += mix(pal(pl * 0.08 + t * 0.05), spectrum(pl * 0.09 + t * 0.06), 0.7)
+         * (0.09 + lvl * 0.35) * (0.5 + wLiquid * 0.9 + wGrid * 0.3);
 
-  // --- Particle swarm: points of light, rainbow colour-cycled ---
-  const int N = 46;
+  // --- Particle swarm spread across the WHOLE frame, advected by a flow field
+  // so it drifts and churns across the screen instead of orbiting a center. ---
+  const int N = 52;
   for(int i = 0; i < N; i++){
     float fi = float(i);
-    // A distinct window of the live waveform drives each particle's radius.
-    float w   = wavS(fi * 0.017 + t * 0.03);
-    float ang = fi * 2.399963 + t * (0.12 + 0.05 * sin(fi * 1.3)); // golden angle
-    float r   = 0.12 + fract(fi * 0.1367 + t * 0.04) * 0.95;
-    r += w * (0.18 + bass * 0.5);
-    vec2 pos  = vec2(cos(ang), sin(ang)) * r;
-    float d   = length(q - pos);
-    float sz  = 0.0045 + treb * 0.012 + uBeat * 0.004;   // treble sharpens the cores
-    float glow = sz / (d * d + sz * 0.7);                // bright core + soft halo
-    // Blend the user's palette with the full rainbow for vivid, shifting hues.
-    vec3 c = mix(pal(fi * 0.041 + t * 0.18 + r * 0.25),
-                 spectrum(fi * 0.03 + t * 0.25 + r * 0.4), 0.55);
-    col += c * glow * (0.35 + abs(w) * 0.7 + uBeat * 0.6);
+    vec2 base = vec2(hash(vec2(fi, 1.7)), hash(vec2(fi, 4.3))) * 2.0 - 1.0;
+    base.x *= asp;
+    vec2 pos = base
+             + flow2(fi, t) * (0.30 + 0.18 * sin(t * 0.2 + fi))
+             + vec2(sin(t * 0.13 + fi * 1.3), cos(t * 0.11 + fi)) * 0.28;
+    float wv = wavS(fi * 0.014 + t * 0.03);
+    float d  = length(q - pos);
+    float sz = 0.0045 + treb * 0.012 + uBeat * 0.004;
+    float glow = sz / (d * d + sz * 0.7);
+    vec3 pc = mix(pal(fi * 0.03 + t * 0.2 + rad * 0.2),
+                  spectrum(fi * 0.02 + t * 0.28), 0.6);
+    col += pc * glow * (0.3 + abs(wv) * 0.7 + uBeat * 0.5) * wSwarm;
   }
   col /= float(N) * 0.06;
 
-  // --- A couple of waveform rings woven through the swarm ---
-  for(int j = 0; j < 2; j++){
-    float fj = float(j);
-    float base   = 0.34 + fj * 0.22 + sin(t * (0.2 + fj * 0.13)) * 0.06;
-    float ripple = wavS(fract(atan(q.y, q.x) / 6.28318) + fj * 0.5 + t * 0.05);
-    float dr     = rad - (base + ripple * (0.12 + bass * 0.35));
-    float ring   = exp(-dr * dr * 900.0);
-    col += spectrum(rad * 0.5 + t * 0.2 + fj * 0.3) * ring * (0.6 + treb * 0.8);
+  // --- Tunnel layer (corkscrew wormhole) ---
+  if (wTunnel > 0.001) {
+    float seg = 6.0 + mod(floor(t / 8.0), 4.0) * 2.0;
+    float a   = atan(uv.y, uv.x) + sin(rad * 3.5 - t * (0.8 + bass * 1.5)) * 0.6 + t * 0.25;
+    float kk  = 6.28318 / seg;
+    float fa  = abs(mod(a, kk) - kk * 0.5);
+    float wv  = wavS(fa * seg * 0.1 + t * 0.04);
+    float spoke = exp(-pow(fa * seg, 2.0) * 0.6) * (0.6 + 0.8 * abs(wv));
+    float rl    = length(uv);
+    float rings = pow(0.5 + 0.5 * sin(rl * 20.0 - t * (3.0 + bass * 6.0)), 3.0);
+    float fall  = clamp(1.0 / (rl * 1.8 + 0.25), 0.0, 1.8);
+    col += spectrum(rl * 0.6 - t * 0.25 + wv * 0.3)
+           * spoke * (0.4 + 0.6 * rings) * fall * wTunnel * 1.3;
   }
 
-  // Beat = a strobing multicolour bloom of the whole field.
-  col += spectrum(t * 0.4) * uBeat * 0.35;
+  // --- Grid / lattice layer (scrolling neon lines + crossing dots) ---
+  if (wGrid > 0.001) {
+    vec2 g  = q * 3.0 + vec2(t * 0.4, sin(t * 0.2) * 0.5);
+    vec2 gf = abs(fract(g) - 0.5);
+    float line = smoothstep(0.44, 0.5, max(gf.x, gf.y));
+    float dot  = smoothstep(0.16, 0.0, length(gf));
+    col += mix(pal(t * 0.1 + q.x * 0.2), spectrum(t * 0.15 + rad * 0.3), 0.6)
+           * (line * 0.5 + dot * 0.8) * wGrid * (0.4 + lvl * 1.0 + uBeat * 0.5);
+  }
 
-  col *= 0.35 + lvl * 1.3 + uBeat * 0.5;
+  // Beat = strobing multicolour bloom of the whole field.
+  col += spectrum(t * 0.4 + rad * 0.2) * uBeat * 0.3;
+
+  col *= 0.4 + lvl * 1.3 + uBeat * 0.5;
   col *= 0.5 + uBrightness;
-  frag = vec4(max(col, 0.0), 1.0);
-}`;
-
-// ---- Mode 2: feedback light-tunnel -----------------------------------------
-// A radial seed — bright waveform-carved spokes + concentric pulses on black.
-// The strong bass-driven zoom + rotation in the feedback pass is what stretches
-// this into the endless receding tunnel: Minter's signature feedback zoom.
-const FRAG_TUNNEL = SCENE_HEADER + `
-void main(){
-  vec2 uv = vUv * 2.0 - 1.0;
-  uv.x *= uResolution.x / uResolution.y;
-
-  float bass = uBass   * uSensitivity;
-  float treb = uTreble * uSensitivity;
-
-  float rad = length(uv);
-  // Swirl the tunnel — the angle twists with depth and time, so the whole
-  // thing corkscrews as the feedback zoom rushes you down it (the rollercoaster).
-  float ang = atan(uv.y, uv.x) + sin(rad * 3.5 - uTime * (0.8 + bass * 1.5)) * 0.5;
-
-  // Spoke count steps 6..12 over time; beats twist the fold.
-  float seg  = 6.0 + mod(floor(uTime / 8.0), 4.0) * 2.0;
-  float k    = 6.28318 / seg;
-  float fang = abs(mod(ang + uBeat * 0.2, k) - k * 0.5);
-
-  // Spokes carved by the waveform, brightest near the axis of each fold.
-  float w     = wavS(fang * seg * 0.1 + uTime * 0.04);
-  float spoke = exp(-pow(fang * seg, 2.0) * 0.6) * (0.6 + 0.8 * abs(w));
-
-  // Concentric rings rushing outward, faster on bass.
-  float rings = 0.5 + 0.5 * sin(rad * 22.0 - uTime * (3.0 + bass * 6.0) + uBeat * 4.0);
-  rings = pow(rings, 3.0);
-
-  float falloff = clamp(1.0 / (rad * 1.8 + 0.25), 0.0, 1.8);
-  float pat = spoke * (0.4 + 0.6 * rings) * falloff;
-
-  vec3 col = spectrum(rad * 0.6 - uTime * 0.25 + w * 0.3) * pat;
-  col += spectrum(uTime * 0.3) * uBeat * 0.4 * spoke * falloff; // beat lights it up
-
-  col *= 0.4 + uLevel * 1.4 + bass * 0.8;
-  col *= 0.55 + uBrightness;
   frag = vec4(max(col, 0.0), 1.0);
 }`;
 
@@ -273,9 +267,10 @@ void main(){
   vec3 c = s + b * uIntensity;
   c = c / (c + vec3(1.0));            // Reinhard tone map
   c = pow(c, vec3(1.0 / 2.2));         // gamma
-  // Saturation push — feedback mixing tends to gray the mids back out.
+  // Saturation push — feedback mixing tends to gray the mids back out; keep the
+  // neon colours electric.
   float luma = dot(c, vec3(0.299, 0.587, 0.114));
-  c = clamp(mix(vec3(luma), c, 1.35), 0.0, 1.0);
+  c = clamp(mix(vec3(luma), c, 1.5), 0.0, 1.0);
   // Mild vignette keeps the edges reading as black.
   vec2 q = vUv * 2.0 - 1.0;
   c *= 1.0 - 0.30 * smoothstep(0.6, 1.6, dot(q, q));
@@ -284,7 +279,7 @@ void main(){
 
 window.NewonShaders = {
   VERT,
-  scenes: { neon: FRAG_NEON, tunnel: FRAG_TUNNEL },
+  scenes: { scene: FRAG_SCENE },
   FRAG_FEEDBACK,
   FRAG_BRIGHT,
   FRAG_BLUR,

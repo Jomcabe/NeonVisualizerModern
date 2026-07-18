@@ -9,7 +9,10 @@ function hex(h) {
   ];
 }
 const PALETTES = [
+  { name: 'Hyper', a: '#ff00e6', b: '#00e5ff', c: '#ffe600' },
   { name: 'Xbox Neon', a: '#00e5ff', b: '#7b5cff', c: '#ff3ea5' },
+  { name: 'Acid', a: '#39ff14', b: '#ff00ff', c: '#00ffff' },
+  { name: 'Candy', a: '#ff3ea5', b: '#8a5cff', c: '#22e0ff' },
   { name: 'Aurora', a: '#16f2c8', b: '#3ad1ff', c: '#8a5cff' },
   { name: 'Sunset', a: '#ff6b3d', b: '#ff2d78', c: '#ffd24c' },
   { name: 'Vaporwave', a: '#ff71ce', b: '#01cdfe', c: '#b967ff' },
@@ -18,8 +21,12 @@ const PALETTES = [
   { name: 'Ice', a: '#7ee8fa', b: '#eec0c6', c: '#4a90e2' }
 ];
 
+// The five layers the modular scene morphs between (see shaders.js).
+const STYLES = ['Swarm', 'Kaleido', 'Tunnel', 'Grid', 'Liquid'];
+
 const state = {
-  mode: 'neon',
+  style: 0,        // current (continuous, eased) style position
+  styleTarget: 0,  // style we're morphing toward
   palette: 0,
   sensitivity: 1.1,
   brightness: 0.35,
@@ -28,6 +35,10 @@ const state = {
   autoCycle: true,
   showLyrics: true
 };
+
+// Eased palette colours — the live values morph toward the selected palette so
+// palette (and auto-cycle) changes cross-fade instead of snapping.
+const curCol = { a: hex(PALETTES[0].a), b: hex(PALETTES[0].b), c: hex(PALETTES[0].c) };
 
 const canvas = document.getElementById('gl');
 let viz, audio;
@@ -190,11 +201,16 @@ gear.addEventListener('click', () => panel.classList.toggle('hidden'));
 
 document.querySelectorAll('#modeSeg button').forEach((b) => {
   b.addEventListener('click', () => {
-    document.querySelectorAll('#modeSeg button').forEach((x) => x.classList.remove('active'));
-    b.classList.add('active');
-    state.mode = b.dataset.mode;
+    state.styleTarget = +b.dataset.style;
+    syncModeButtons();
   });
 });
+function syncModeButtons() {
+  const active = Math.round(state.styleTarget) % STYLES.length;
+  document.querySelectorAll('#modeSeg button').forEach((x) =>
+    x.classList.toggle('active', +x.dataset.style === active)
+  );
+}
 
 const paletteSel = document.getElementById('paletteSel');
 PALETTES.forEach((p, i) => {
@@ -225,14 +241,9 @@ document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
 window.addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') panel.classList.toggle('hidden');
   else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
-  else if (e.key === ' ') { state.mode = state.mode === 'neon' ? 'tunnel' : 'neon'; syncModeButtons(); }
+  else if (e.key === ' ') { state.styleTarget = (Math.round(state.styleTarget) + 1) % STYLES.length; syncModeButtons(); }
   else if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen();
 });
-function syncModeButtons() {
-  document.querySelectorAll('#modeSeg button').forEach((x) =>
-    x.classList.toggle('active', x.dataset.mode === state.mode)
-  );
-}
 function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen();
   else document.documentElement.requestFullscreen().catch(() => {});
@@ -255,20 +266,16 @@ window.addEventListener('mousemove', () => {
   }, 2800);
 });
 
-// ---- Auto-cycle palettes and modes (like the original Neon) ----
-let cycleTick = 0;
+// ---- Auto-cycle: advance the style + palette TARGETS; the per-frame easing
+// (see frame()) morphs toward them, so every transition is a smooth cross-fade
+// rather than a hard cut. ----
 setInterval(() => {
   if (!state.autoCycle) return;
-  cycleTick++;
+  state.styleTarget = (Math.round(state.styleTarget) + 1) % STYLES.length;
+  syncModeButtons();
   state.palette = (state.palette + 1) % PALETTES.length;
   paletteSel.value = state.palette;
-  // Every other tick, switch visual mode too; the feedback trails carry over,
-  // so the handoff reads as a morph rather than a hard cut.
-  if (cycleTick % 2 === 0) {
-    state.mode = state.mode === 'neon' ? 'tunnel' : 'neon';
-    syncModeButtons();
-  }
-}, 18000);
+}, 13000);
 
 // ---- Now playing ----
 const npEl = document.getElementById('nowplaying');
@@ -374,6 +381,26 @@ function updateLyrics() {
   }
 }
 
+// ---- Smooth morphing: ease the continuous style + palette colours toward
+// their targets every frame, so mode/palette switches (and auto-cycle) glide. ----
+function easeStyle() {
+  let diff = state.styleTarget - state.style;
+  // Take the shortest way around the ring of 5 styles (so 4 -> 0 morphs through
+  // the short edge, not all the way back).
+  if (diff > STYLES.length / 2) diff -= STYLES.length;
+  if (diff < -STYLES.length / 2) diff += STYLES.length;
+  state.style += diff * 0.04;
+  state.style = ((state.style % STYLES.length) + STYLES.length) % STYLES.length;
+}
+function easeColors() {
+  const p = PALETTES[state.palette];
+  const tgt = { a: hex(p.a), b: hex(p.b), c: hex(p.c) };
+  const k = 0.05;
+  ['a', 'b', 'c'].forEach((ch) => {
+    for (let i = 0; i < 3; i++) curCol[ch][i] += (tgt[ch][i] - curCol[ch][i]) * k;
+  });
+}
+
 // ---- Main loop ----
 window.addEventListener('resize', () => viz && viz.resize());
 
@@ -383,9 +410,10 @@ function frame() {
     viz.resize();
     audio.update();
     checkAudioProbe();
-    const p = PALETTES[state.palette];
+    easeStyle();
+    easeColors();
     const t = (performance.now() - start) / 1000;
-    viz.render(state.mode, {
+    viz.render('scene', {
       time: t,
       level: audio.level,
       bass: audio.bass,
@@ -393,26 +421,22 @@ function frame() {
       treble: audio.treble,
       beat: audio.beat,
       wave: audio.wave,
+      style: state.style,
       sensitivity: state.sensitivity,
       brightness: state.brightness,
       bloom: state.bloom,
-      // Feedback-warp parameters (per frame, ~60fps). This is the heart of the
-      // Neon look. A slow zoom LFO makes the picture surge inward (>1, diving
-      // INTO the tunnel) then pull back — the rollercoaster rush — with bass and
-      // beats punching it deeper. Rotation wanders and reverses so the trails
-      // corkscrew, and a strong hue drift rainbows them (60s video-feedback).
-      decay: state.mode === 'tunnel' ? 0.70 + state.trails * 0.22 : 0.86 + state.trails * 0.11,
-      rot: Math.sin(t * 0.06) * 0.02 + Math.sin(t * 0.017) * 0.02 + audio.beat * 0.03
-           + (state.mode === 'tunnel' ? 0.012 : 0.005),
-      // Base < 1 (drifting outward) + a rush LFO that periodically crosses 1.0
-      // to dive in; bass/beat pull you deeper still.
-      zoom: (state.mode === 'tunnel' ? 0.984 : 0.992)
-            + Math.sin(t * 0.13) * 0.016 - 0.006
-            - audio.bass * 0.030 - audio.beat * 0.022,
-      hueDrift: 0.035,
-      colA: hex(p.a),
-      colB: hex(p.b),
-      colC: hex(p.c)
+      // Feedback-warp parameters (per frame, ~60fps). Kept STEADY on purpose:
+      // the picture drifts gently outward (zoom just under 1) with a slow
+      // one-way rotation, so trails flow continuously outward — a sense of
+      // travel, not the back-and-forth rocking a zoom LFO produced. Bass/beats
+      // pull you deeper; the scene layers themselves supply the churn and chaos.
+      decay: 0.85 + state.trails * 0.12,
+      rot: 0.006 + Math.sin(t * 0.02) * 0.008 + audio.beat * 0.02,
+      zoom: 0.990 - audio.bass * 0.020 - audio.beat * 0.015,
+      hueDrift: 0.03,
+      colA: curCol.a,
+      colB: curCol.b,
+      colC: curCol.c
     });
   }
   updateLyrics();

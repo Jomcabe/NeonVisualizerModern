@@ -69,11 +69,14 @@
   <!-- Controls (toggle with the gear or the "C" key) -->
   <button id="gear" title="Settings (C)">⚙</button>
   <div id="panel" class="hidden">
-    <div class="panel-row">
+    <div class="panel-row mode-row">
       <span class="panel-label">Mode</span>
-      <div class="seg" id="modeSeg">
-        <button data-mode="neon" class="active">Neon</button>
-        <button data-mode="tunnel">Tunnel</button>
+      <div class="seg wrap" id="modeSeg">
+        <button data-style="0" class="active">Swarm</button>
+        <button data-style="1">Kaleido</button>
+        <button data-style="2">Tunnel</button>
+        <button data-style="3">Grid</button>
+        <button data-style="4">Liquid</button>
       </div>
     </div>
     <div class="panel-row">
