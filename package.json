@@ -1,7 +1,7 @@
 {
   "name": "newon",
   "productName": "Newon",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Newon — a modern, neon music visualizer for macOS that listens to whatever you're playing (Spotify) and paints it in flowing light. Inspired by the Xbox 360 'Neon' visualizer.",
   "main": "src/main.js",
   "author": "jomcabe",

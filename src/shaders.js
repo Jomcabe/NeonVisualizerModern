@@ -39,6 +39,8 @@ uniform vec4  uGene3;   // x shape spin  y cam sway  z cam shake  w (spare)
 // tracks drive the visuals as hard as loud ones.
 uniform vec4  uAud0;    // x sub  y lowMid  z highMid  w air
 uniform vec4  uAud1;    // x centroid(pitch 0..1)  y flux  z onset  w trebBeat
+// Choreographed camera motion, eased on the CPU so nothing ever snaps:
+uniform vec4  uMotion;  // x barrel-spin angle  y gaze yaw  z gaze pitch  w (spare)
 
 // Live audio waveform, -1..1, sampled along 0..1 (wraps).
 float wav(float x){ return texture(uWave, vec2(fract(x), 0.5)).r * 2.0 - 1.0; }
@@ -82,12 +84,13 @@ vec3 spectrum(float t){
 // space and whip past the camera. Everything is rendered as accumulated neon
 // glow rather than hard surfaces, then melted further by the feedback loop.
 const FRAG_FLIGHT = SCENE_HEADER + `
-// The rollercoaster track: a sum-of-sines spline with three frequencies so the
-// turns never repeat on any human timescale.
+// The ride's track: a sum-of-sines spline. Low frequencies and modest
+// amplitudes on purpose — the curves should be long, lazy sweeps you lean
+// through, never hairpins that snap the view around.
 vec3 path(float z){
   return vec3(
-    sin(z * 0.145) * 2.3 + cos(z * 0.052) * 2.1 + sin(z * 0.021) * 3.0,
-    cos(z * 0.126) * 2.0 + sin(z * 0.047) * 1.7 + cos(z * 0.019) * 2.2,
+    sin(z * 0.075) * 1.6 + cos(z * 0.033) * 1.15,
+    cos(z * 0.068) * 1.4 + sin(z * 0.026) * 1.0,
     z);
 }
 
@@ -131,16 +134,18 @@ float shapes(vec3 p, out float hue){
     float h2 = hash(vec2(id, 41.3));
     float h3 = hash(vec2(id, 93.1));
     float zc = (id + 0.5) * spread;
-    // Orbit around the track so shapes whip past instead of sitting centred.
+    // Orbit around the track so shapes whip past instead of sitting centred —
+    // and stay OFF the camera line, so they never balloon into a screen-
+    // filling white blob.
     vec3 ctr = path(zc);
     float ang = h1 * 6.28318 + uTime * (0.12 + h2 * 0.35) * sign(h3 - 0.5);
-    ctr.xy += vec2(cos(ang), sin(ang)) * (0.25 + h2 * 0.75) * uGene1.z;
+    ctr.xy += vec2(cos(ang), sin(ang)) * (0.45 + h2 * 0.55) * uGene1.z;
     vec3 q = p - ctr;
     // Tumble on two axes at gene-driven speed.
     float sp = uGene3.x * (0.4 + h1);
     q.xy = rot(uTime * sp + h1 * 6.28318) * q.xy;
     q.yz = rot(uTime * sp * 0.83 + h2 * 6.28318) * q.yz;
-    float s = uGene2.z * (0.6 + h3 * 0.9);
+    float s = uGene2.z * (0.5 + h3 * 0.6);
     float kind = h1 * 4.0;
     float d;
     if(kind < 1.0)      d = sdTorus(q, vec2(s, s * 0.24));
@@ -161,29 +166,36 @@ void main(){
   float lvl  = uLevel  * uSensitivity;
   float t = uTime;
 
-  // ---- The rollercoaster camera (you are not driving) ----
+  // ---- The ride camera (you are not driving) ----
+  // Long look-ahead + gentle bank into the turn's g-force; the choreographed
+  // barrel spin and gaze wander (uMotion, eased over seconds on the CPU) ride
+  // on top. Everything here is soft — harshness reads as glitch, not motion.
   float dd = uDist;
   vec3 ro = path(dd);
-  vec3 ahead = path(dd + 2.2);
-  // Lateral second difference = the g-force of the turn; bank hard into it.
+  vec3 ahead = path(dd + 3.5);
   vec3 acc2 = path(dd + 2.0) - 2.0 * path(dd + 1.0) + ro;
-  float roll = clamp(-acc2.x * 3.0, -1.2, 1.2)
-             + uGene3.y * sin(t * 0.23)
-             + sin(t * 11.0) * 0.04 * bass           // bass shudder
-             + uAud1.w * 0.16;                       // hi-hat / snare roll flick
-  // Turbulence shake, heavier when the music slams.
-  ro.xy += (vec2(noise(vec2(t * 2.1, 3.7)), noise(vec2(7.7, t * 2.3))) - 0.5)
-           * (0.06 + bass * 0.30) * uGene3.z;
+  float roll = clamp(-acc2.x * 8.0, -0.45, 0.45)
+             + uGene3.y * 0.35 * sin(t * 0.16)
+             + uAud1.w * 0.05                        // faint hi-hat lean
+             + uMotion.x;                            // slow barrel spin
+  // Gentle turbulence only — a hum, not a jackhammer.
+  ro.xy += (vec2(noise(vec2(t * 1.3, 3.7)), noise(vec2(7.7, t * 1.4))) - 0.5)
+           * (0.02 + bass * 0.10) * uGene3.z;
 
   vec3 fw = normalize(ahead - ro);
   vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
   vec3 up = cross(rt, fw);
+  // Gaze wander: the camera turns to look around the tunnel while travel
+  // continues along the track.
+  vec3 look = normalize(fw + rt * uMotion.y + up * uMotion.z);
+  rt = normalize(cross(look, up));
+  up = cross(rt, look);
   float cr = cos(roll), sr = sin(roll);
   vec3 bx = rt * cr + up * sr;
   vec3 by = up * cr - rt * sr;
-  // FOV lurches wide on bass hits — the drop-into-the-dip stomach feeling.
-  float fov = 1.05 - bass * 0.18 - uBeat * 0.08;
-  vec3 rd = normalize(fw * fov + uv.x * bx + uv.y * by);
+  // FOV eases wide on bass — the dip-in-the-stomach feel, kept subtle.
+  float fov = 1.05 - bass * 0.12 - uBeat * 0.05;
+  vec3 rd = normalize(look * fov + uv.x * bx + uv.y * by);
 
   // ---- Volumetric neon march: everything is accumulated glow ----
   // Wall glow is accumulated as (intensity, glow-weighted hue coordinate) and

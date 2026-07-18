@@ -199,6 +199,7 @@ class GLViz {
     gl.uniform4fv(this._loc(prog, 'uGene3'), u.gene3 || [1, 0.3, 0.5, 0]);
     gl.uniform4fv(this._loc(prog, 'uAud0'), u.aud0 || [0, 0, 0, 0]);
     gl.uniform4fv(this._loc(prog, 'uAud1'), u.aud1 || [0.35, 0, 0, 0]);
+    gl.uniform4fv(this._loc(prog, 'uMotion'), u.motion || [0, 0, 0, 0]);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.waveTex);
     gl.uniform1i(this._loc(prog, 'uWave'), 0);
