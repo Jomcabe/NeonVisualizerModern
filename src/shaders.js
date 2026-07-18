@@ -49,106 +49,115 @@ vec3 pal(float t){
 }
 `;
 
-// ---- Mode 1: "Neon" — mirrored live-waveform filaments ----------------------
-// Draws the actual audio waveform as thin glowing filaments, folded through a
-// kaleidoscope mirror and slowly rotating. Kept sparse and bright on black —
-// the feedback pass turns these into the flowing, melting Neon light-forms.
-const FRAG_RIBBONS = SCENE_HEADER + `
-// One Neon "shape": v selects fold count and filament style (linear waveform
-// filaments vs. a waveform-modulated ring), so the visualizer cycles through
-// distinct looks the way the original did.
-vec3 shape(vec2 uv, float v, float bass, float treb){
-  float t = uTime;
-  // Slow, wandering global rotation so the feedback trails swirl.
-  vec2 p = rot(t * 0.11 + sin(t * 0.047) * 0.9) * uv;
-
-  // Kaleidoscope fold — fold count varies per shape.
-  float folds = v < 0.5 ? 4.0 : (v < 1.5 ? 6.0 : (v < 2.5 ? 2.0 : 3.0));
-  bool ringStyle = (v > 0.5 && v < 1.5) || v > 2.5;
+// ---- Mode 1: "Neon" — a swarm of particle light-forms -----------------------
+// The real Neon lightsynth builds its look from clouds of bright *point* sprites
+// (not vector lines), color-cycled across the spectrum and folded through
+// kaleidoscope symmetry. Each particle rides a golden-angle spiral whose radius
+// is pushed by the live waveform + bass. Drawn sparse and bright on black; the
+// feedback pass then pulls the points into flowing, recursive light-tunnels.
+const FRAG_NEON = SCENE_HEADER + `
+// Fold a point through n-fold kaleidoscope symmetry. Returns folded xy + radius.
+vec3 kfold(vec2 p, float folds){
   float k = 6.28318 / folds;
-  float ang = atan(p.y, p.x);
-  float rad = length(p);
-  float fang = abs(mod(ang, k) - k * 0.5);
-  p = vec2(cos(fang), sin(fang)) * rad;
-
-  vec3 col = vec3(0.0);
-  for(int i = 0; i < 3; i++){
-    float fi = float(i);
-    float amp = 0.16 + bass * 0.55 + uBeat * 0.18;
-    float x, d;
-    if (ringStyle) {
-      // Ring whose radius ripples with the waveform — folds make petals.
-      x = fang * folds * 0.159 + fi * 0.37 + t * 0.035;
-      float r0 = 0.38 + fi * 0.16 + sin(t * (0.27 + fi * 0.11)) * 0.12;
-      d = rad - (r0 + wavS(x) * amp * 0.7);
-    } else {
-      // Each filament reads a different shifted window of the live waveform.
-      x = p.x * 0.30 + fi * 0.37 + t * 0.035;
-      d = p.y - (wavS(x) * amp + sin(t * (0.33 + fi * 0.13) + fi * 2.1) * 0.34);
-    }
-    float core = exp(-d * d * (1500.0 + treb * 2500.0));  // thin bright core
-    float halo = exp(-d * d * 70.0) * 0.10;               // soft aura
-    // Hue cycles slowly and globally (per-filament offsets stay small) so
-    // overlapping trails reinforce one color instead of averaging to gray.
-    col += pal(x * 0.15 + t * 0.045 + fi * 0.09) * (core * (0.8 + treb * 0.8) + halo);
-  }
-  return col;
+  float a = atan(p.y, p.x);
+  float r = length(p);
+  a = abs(mod(a, k) - k * 0.5);
+  return vec3(cos(a) * r, sin(a) * r, r);
 }
 
 void main(){
   vec2 uv = vUv * 2.0 - 1.0;
   uv.x *= uResolution.x / uResolution.y;
 
-  float bass = uBass * uSensitivity;
+  float bass = uBass   * uSensitivity;
   float treb = uTreble * uSensitivity;
+  float lvl  = uLevel  * uSensitivity;
 
-  // Cycle through the 4 shapes, crossfading over the last 20% of each cycle
-  // (the feedback trails smooth the handoff further).
-  float cyc = uTime / 30.0;
-  float v0 = mod(floor(cyc), 4.0);
-  float f = smoothstep(0.8, 1.0, fract(cyc));
-  vec3 col = mix(shape(uv, v0, bass, treb),
-                 shape(uv, mod(v0 + 1.0, 4.0), bass, treb), f);
+  // Slow global spin + bass-breathing zoom so the swarm surges with the music.
+  vec2 p = rot(uTime * 0.05 + sin(uTime * 0.021) * 0.6) * uv;
+  p *= 0.92 - bass * 0.22 - uBeat * 0.10;
 
-  // Audio drives the energy fed into the feedback loop.
-  col *= 0.22 + uLevel * 1.2 + uBeat * 0.5;
+  // Kaleidoscope petal count steps every ~10s (3,4,5,6-fold), like Neon's
+  // symmetry presets.
+  float folds = 3.0 + mod(floor(uTime / 10.0), 4.0);
+  vec3 fr = kfold(p, folds);
+  vec2 q = fr.xy;
+  float rad = fr.z;
+
+  vec3 col = vec3(0.0);
+
+  // --- Particle swarm: points of light, color-cycled across the palette ---
+  const int N = 46;
+  for(int i = 0; i < N; i++){
+    float fi = float(i);
+    // A distinct window of the live waveform drives each particle's radius.
+    float w   = wavS(fi * 0.017 + uTime * 0.03);
+    float ang = fi * 2.399963 + uTime * (0.12 + 0.05 * sin(fi * 1.3)); // golden angle
+    float r   = 0.12 + fract(fi * 0.1367 + uTime * 0.04) * 0.95;
+    r += w * (0.18 + bass * 0.5);
+    vec2 pos  = vec2(cos(ang), sin(ang)) * r;
+    float d   = length(q - pos);
+    float sz  = 0.0045 + treb * 0.012 + uBeat * 0.004;   // treble sharpens the cores
+    float glow = sz / (d * d + sz * 0.7);                // bright core + soft halo
+    col += pal(fi * 0.041 + uTime * 0.18 + r * 0.25)     // fast full-loop spectrum cycle
+           * glow * (0.35 + abs(w) * 0.7 + uBeat * 0.6);
+  }
+  col /= float(N) * 0.06;
+
+  // --- A couple of waveform rings woven through the swarm ---
+  for(int j = 0; j < 2; j++){
+    float fj = float(j);
+    float base   = 0.34 + fj * 0.22 + sin(uTime * (0.2 + fj * 0.13)) * 0.06;
+    float ripple = wavS(fract(atan(q.y, q.x) / 6.28318) + fj * 0.5 + uTime * 0.05);
+    float dr     = rad - (base + ripple * (0.12 + bass * 0.35));
+    float ring   = exp(-dr * dr * 900.0);
+    col += pal(rad * 0.4 + uTime * 0.15 + fj * 0.3) * ring * (0.6 + treb * 0.8);
+  }
+
+  // Beat flash — a quick spectral bloom of the whole field.
+  col += pal(uTime * 0.25) * uBeat * 0.25;
+
+  col *= 0.35 + lvl * 1.3 + uBeat * 0.5;
   col *= 0.5 + uBrightness;
   frag = vec4(max(col, 0.0), 1.0);
 }`;
 
-// ---- Mode 2: kaleidoscope tunnel -------------------------------------------
+// ---- Mode 2: feedback light-tunnel -----------------------------------------
+// A radial seed — bright waveform-carved spokes + concentric pulses on black.
+// The strong bass-driven zoom + rotation in the feedback pass is what stretches
+// this into the endless receding tunnel: Minter's signature feedback zoom.
 const FRAG_TUNNEL = SCENE_HEADER + `
 void main(){
   vec2 uv = vUv * 2.0 - 1.0;
   uv.x *= uResolution.x / uResolution.y;
 
-  float bass = uBass * uSensitivity;
-  float mid  = uMid  * uSensitivity;
+  float bass = uBass   * uSensitivity;
+  float treb = uTreble * uSensitivity;
 
   float ang = atan(uv.y, uv.x);
   float rad = length(uv);
 
-  // Fixed segment count (a varying count pops as the beat envelope decays);
-  // beats twist the fold instead.
-  float seg = 8.0;
-  float k = 6.2831 / seg;
-  ang = abs(mod(ang + uBeat * 0.25, k) - k * 0.5);
+  // Spoke count steps 6..12 over time; beats twist the fold.
+  float seg  = 6.0 + mod(floor(uTime / 8.0), 4.0) * 2.0;
+  float k    = 6.28318 / seg;
+  float fang = abs(mod(ang + uBeat * 0.2, k) - k * 0.5);
 
-  float depth = 1.0 / (rad + 0.14) + uTime * (0.55 + bass * 0.8);
-  float rings  = sin(depth * 6.0 - uTime * 4.0 + uBeat * 3.0);
-  float spokes = sin(ang * seg * 2.0 + uTime + mid * 6.0);
+  // Spokes carved by the waveform, brightest near the axis of each fold.
+  float w     = wavS(fang * seg * 0.1 + uTime * 0.04);
+  float spoke = exp(-pow(fang * seg, 2.0) * 0.6) * (0.6 + 0.8 * abs(w));
 
-  // Gate rings and spokes to sharp, bright structures with black gaps between.
-  float ring  = pow(max(0.0, rings), 3.0);
-  float spoke = pow(max(0.0, spokes), 2.0);
-  float pat   = ring * (0.35 + 0.65 * spoke);
-  float falloff = clamp(1.0 / (rad * 1.6 + 0.35), 0.0, 1.6); // clamp center blowout
+  // Concentric rings rushing outward, faster on bass.
+  float rings = 0.5 + 0.5 * sin(rad * 22.0 - uTime * (3.0 + bass * 6.0) + uBeat * 4.0);
+  rings = pow(rings, 3.0);
 
-  vec3 col = pal(depth * 0.1 + uTime * 0.05) * pat * falloff;
-  col *= 0.35 + uLevel * 1.4 + bass * 0.9;
-  col += pal(depth * 0.2) * uBeat * 0.5 * pat; // beat only lights the structure
+  float falloff = clamp(1.0 / (rad * 1.8 + 0.25), 0.0, 1.8);
+  float pat = spoke * (0.4 + 0.6 * rings) * falloff;
 
-  col *= 0.6 + uBrightness;
+  vec3 col = pal(rad * 0.5 - uTime * 0.2) * pat;
+  col += pal(uTime * 0.2) * uBeat * 0.4 * spoke * falloff; // beat lights the structure
+
+  col *= 0.4 + uLevel * 1.4 + bass * 0.8;
+  col *= 0.55 + uBrightness;
   frag = vec4(max(col, 0.0), 1.0);
 }`;
 
@@ -251,7 +260,7 @@ void main(){
 
 window.NewonShaders = {
   VERT,
-  scenes: { ribbons: FRAG_RIBBONS, tunnel: FRAG_TUNNEL },
+  scenes: { neon: FRAG_NEON, tunnel: FRAG_TUNNEL },
   FRAG_FEEDBACK,
   FRAG_BRIGHT,
   FRAG_BLUR,

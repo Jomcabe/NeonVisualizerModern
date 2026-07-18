@@ -30,8 +30,8 @@ beat-reactive light show. No cables, no "share your screen" gymnastics — click
 | | |
 |---|---|
 | 🎧 **Hears your music** | Captures system audio via macOS ScreenCaptureKit loopback — reacts to Spotify, Apple Music, YouTube, anything. Falls back to the mic if needed. |
-| 🌈 **Neon light-forms + bloom** | The signature Xbox look: the live waveform drawn as glowing filaments, folded through kaleidoscope symmetry and run through a video-feedback loop — the same technique the original Neon used — so the light melts into flowing, hue-shifting trails. |
-| 🌀 **Kaleidoscope tunnel** | A second mode — a beat-reactive geometric tunnel that folds and pulses on the bass. |
+| 🌈 **Neon light-forms + bloom** | The signature Xbox look: swarms of bright particle sprites (not vector lines), color-cycled across the spectrum, folded through kaleidoscope symmetry and driven into recursive light-tunnels by a strong bass-reactive video-feedback loop — the same feedback-zoom technique Jeff Minter's original Neon used. |
+| 🌀 **Feedback tunnel** | A second mode — a radial spoke/ring seed that the feedback zoom stretches into an endless receding tunnel, rushing and twisting on the beat. |
 | 🎵 **Subtle now-playing** | Current track tucked in the corner (read straight from Spotify — no login). |
 | ✨ **Synced lyrics** | When available, the current lyric line is sprinkled in at the bottom, timed to playback (via [lrclib.net](https://lrclib.net)). |
 | 🎚 **Presets & sliders** | 7 neon palettes (incl. classic *Xbox Neon*), plus sensitivity, brightness, glow, and trail-length sliders. Optional auto-cycle. |
@@ -55,9 +55,14 @@ beat-reactive light show. No cables, no "share your screen" gymnastics — click
 3. Because the app has no Apple Developer certificate (personal build, ad-hoc
    signed), the first launch needs a Gatekeeper bypass:
    **right-click Newon → Open → Open**.
-4. Click **Start Listening**. macOS will ask for **Screen Recording** permission —
-   this is what lets Newon capture system audio. Approve it, then relaunch if asked.
-5. Play something in Spotify. 🎉
+4. Click **Start Listening**. macOS will pop the **Screen Recording** prompt —
+   this is what lets Newon capture system audio. Turn **Newon** on, then **fully
+   quit and relaunch** (macOS never applies the grant to an already-running app).
+5. Hit **Start Listening** again and play something in Spotify. 🎉
+
+> Newon will **not** silently switch to your microphone. If Screen Recording
+> isn't granted, it shows a permission screen with a one-click shortcut to
+> System Settings — using the mic is an explicit opt-in on that screen.
 
 > **Why Screen Recording?** macOS routes system-audio capture through the same
 > ScreenCaptureKit permission as screen recording. Newon never records or
@@ -77,16 +82,24 @@ xattr -cr /Applications/Newon.app
 
 Then launch with right-click → Open as usual.
 
-### Reacting to the microphone instead of Spotify
+### "It keeps using my microphone instead of Spotify"
 
-Newon needs **Screen Recording** permission for system-audio loopback; without
-it, Start Listening silently falls back to the mic. macOS ties that grant to
-the app's code signature, so **updating/rebuilding Newon can revoke it** even
-if you approved it before — Newon now detects this and shows a banner with a
-button straight to **System Settings → Privacy & Security → Screen
-Recording**. Toggle Newon on (or off and back on) there, then **fully quit and
-relaunch** the app — permission changes don't apply to an already-running
-process.
+Newon needs **Screen Recording** permission for system-audio loopback. Two
+things make this trip people up on macOS, and Newon now handles both:
+
+1. **The prompt only fires when the app actually attempts a capture.** Newon now
+   always attempts the system-audio capture on **Start Listening**, so the macOS
+   Screen Recording prompt actually appears and Newon gets registered under
+   **System Settings → Privacy & Security → Screen Recording**.
+2. **The grant never applies to a running app.** After you toggle Newon on, you
+   must **fully quit and relaunch** — approving it mid-session does nothing until
+   the next launch.
+
+Newon **no longer silently redirects to the mic**. If Screen Recording isn't
+granted, it shows a permission screen with a one-click shortcut to the right
+Settings pane; the microphone is an explicit *"Use my microphone instead"*
+opt-in on that screen. macOS also ties the grant to the app's code signature, so
+**rebuilding/updating Newon can revoke it** — just re-toggle and relaunch.
 
 ---
 
