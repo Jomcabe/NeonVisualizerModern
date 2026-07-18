@@ -263,20 +263,16 @@ window.addEventListener('mousemove', () => {
   }, 2800);
 });
 
-// ---- Auto-cycle palettes and modes (like the original Neon) ----
-let cycleTick = 0;
+// ---- Auto-cycle palettes (like the original Neon) ----
+// Palette changes are a TARGET — the live colours ease over several seconds
+// (see palCur in the main loop), so the scene drifts to the new scheme
+// instead of jumping. Modes no longer auto-switch: a whole-scene hard cut
+// every 36s read as a glitch, not a feature. Space still switches manually.
 setInterval(() => {
   if (!state.autoCycle) return;
-  cycleTick++;
   state.palette = (state.palette + 1) % PALETTES.length;
   paletteSel.value = state.palette;
-  // Every other tick, switch visual mode too; the feedback trails carry over,
-  // so the handoff reads as a morph rather than a hard cut.
-  if (cycleTick % 2 === 0) {
-    state.mode = MODES[(MODES.indexOf(state.mode) + 1) % MODES.length];
-    syncModeButtons();
-  }
-}, 18000);
+}, 25000);
 
 // ---- Now playing ----
 const npEl = document.getElementById('nowplaying');
@@ -457,7 +453,6 @@ let geneTarget = makeGenes();
 let nextRoll = 0;                   // silence fallback — music re-rolls first
 function rerollGenes() {
   geneTarget = makeGenes();
-  genes.folds = geneTarget.folds;   // symmetry snaps — reads as a new preset
   nextRoll = perfT() + 22 + Math.random() * 14;
 }
 function perfT() { return (performance.now() - start) / 1000; }
@@ -470,6 +465,15 @@ let camDist = 0;                    // distance travelled along the ride
 let lastFrameT = 0;
 let rotDir = 1;                     // trail-spin direction (eased, not snapped)
 let rotDirTarget = 1;
+let speedEnv = 0;                   // bass/kick push, smoothed into a swell
+let levelSlow = 0;                  // extra-slow loudness for the throttle
+
+// Live palette colours ease toward the selected palette over ~4s, so palette
+// changes (including auto-cycle) drift instead of jumping.
+const palCur = { a: hex(PALETTES[0].a), b: hex(PALETTES[0].b), c: hex(PALETTES[0].c) };
+function easeColor(cur, target, k) {
+  for (let i = 0; i < 3; i++) cur[i] += (target[i] - cur[i]) * k;
+}
 
 // ---- Motion choreography ----
 // The ride is a sequence of smooth manoeuvres, not a constant forward push:
@@ -506,6 +510,11 @@ function frame() {
     const dt = Math.min(Math.max(t - lastFrameT, 0), 0.05);
     lastFrameT = t;
 
+    const palEase = 1 - Math.exp(-dt * 0.4);   // ~4s colour drift
+    easeColor(palCur.a, hex(p.a), palEase);
+    easeColor(palCur.b, hex(p.b), palEase);
+    easeColor(palCur.c, hex(p.c), palEase);
+
     // Mutate the DNA the way projectM does hard preset cuts: when the MUSIC
     // changes character (a drop, a chorus, the beat coming in), the visuals
     // morph into a new form. The timer is only a fallback for silence. The
@@ -516,9 +525,12 @@ function frame() {
       if (Math.random() < 0.5) rotDirTarget = -rotDirTarget;
     }
     rotDir += (rotDirTarget - rotDir) * (1 - Math.exp(-dt * 0.6));
+    // EVERYTHING eases — including the fold count. A fractional fold count
+    // just means the kaleidoscope is mid-reorganisation; with the liquid warp
+    // and trails it reads as the pattern reforming, never a cut.
     const ease = 1 - Math.exp(-dt * 0.35);  // slow, liquid morph
     for (const k in genes) {
-      if (k !== 'folds') genes[k] += (geneTarget[k] - genes[k]) * ease;
+      genes[k] += (geneTarget[k] - genes[k]) * ease;
     }
 
     // Advance the choreography. The SONG still owns the pedal: tempo scales
@@ -530,13 +542,16 @@ function frame() {
     motion.spinVel += (motion.spinVelTarget - motion.spinVel) * mEase;
     motion.yaw += (motion.yawTarget - motion.yaw) * mEase * 0.7;
     motion.pitch += (motion.pitchTarget - motion.pitch) * mEase * 0.7;
-    motion.spin += motion.spinVel * dt * (0.6 + audio.level);
+    motion.spin += motion.spinVel * dt;
     const tempo = audio.bpm / 120;
-    // Kicks only push when travelling forward — a backwards pull should feel
-    // like being drawn back, not fought over.
-    const punch = motion.vel > 0 ? audio.bass * 1.3 + audio.beat * 0.7 : 0;
+    // Kicks push only when travelling forward — and through a smoothed
+    // envelope, so a hit becomes a half-second swell of speed rather than a
+    // velocity step (the step was a visible lurch on every beat).
+    const punchRaw = motion.vel > 0 ? audio.bass * 1.3 + audio.beat * 0.7 : 0;
+    speedEnv += (punchRaw - speedEnv) * (1 - Math.exp(-dt * 2.5));
+    levelSlow += (audio.level - levelSlow) * (1 - Math.exp(-dt * 1.5));
     camDist += dt * (motion.vel * (0.7 + genes.speed * 0.35) * tempo
-                     * (0.45 + audio.level * 1.3) + punch);
+                     * (0.45 + levelSlow * 1.3) + speedEnv);
 
     viz.render(state.mode, {
       time: t,
@@ -585,9 +600,9 @@ function frame() {
               - audio.bass * 0.030 - audio.beat * 0.022,
       // Trail hues melt faster when the top end sizzles — slow base drift.
       hueDrift: 0.012 + audio.treble * 0.04,
-      colA: hex(p.a),
-      colB: hex(p.b),
-      colC: hex(p.c)
+      colA: palCur.a,
+      colB: palCur.b,
+      colC: palCur.c
     });
   }
   updateLyrics();

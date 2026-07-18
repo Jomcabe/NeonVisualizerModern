@@ -273,7 +273,7 @@ void main(){
   col += mix(pal(hue * 0.45 + uGene2.y + uAud1.x * 0.25),
              spectrum(hue + t * uGene2.x + uGene2.y + uAud1.x * 0.45), 0.6) * wallI;
 
-  col += spectrum(t * 0.3) * uBeat * 0.10;   // whole-field beat flash
+  col += spectrum(t * 0.3) * uBeat * 0.06;   // soft whole-field beat glow
   col *= 0.50 + lvl * 0.90 + bass * 0.40;
   col *= 0.5 + uBrightness;
   frag = vec4(max(col, 0.0), 1.0);

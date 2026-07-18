@@ -217,7 +217,7 @@ class AudioEngine {
       this._profileSlow[i] = this._profileSlow[i] * 0.992 + prof[i] * 0.008;
       dist += Math.abs(this._profileFast[i] - this._profileSlow[i]);
     }
-    if (dist > 0.17 && rms > 0.05 && now - this._lastSection > 7000) {
+    if (dist > 0.17 && rms > 0.05 && now - this._lastSection > 12000) {
       this.section = true;
       this._lastSection = now;
     }
