@@ -317,10 +317,11 @@ if (window.newon) {
 
   // The Spotify now-playing read rides on the macOS Automation permission,
   // which (like Screen Recording) is tied to the app's code signature — an
-  // update can silently revoke it. When that happens, SAY so instead of the
-  // overlay just vanishing.
+  // update can silently revoke it. Surface the live connection state right in
+  // the settings panel, and raise the banner when macOS is the blocker.
   let automationWarned = false;
   window.newon.onSpotifyStatus((status) => {
+    setSpotifyState(status);
     if (status === 'denied' && !automationWarned) {
       automationWarned = true;
       permHintAction = 'automation';
@@ -335,6 +336,25 @@ if (window.newon) {
     }
   });
 }
+
+const spState = document.getElementById('spotifyState');
+document.getElementById('spotifyFixBtn').addEventListener('click', () => {
+  window.newon && window.newon.openAutomationSettings();
+});
+function setSpotifyState(status) {
+  const fix = document.getElementById('spotifyFixBtn');
+  fix.classList.add('hidden');
+  spState.classList.remove('ok', 'bad');
+  if (status === 'ok') { spState.textContent = 'connected ✓'; spState.classList.add('ok'); }
+  else if (status === 'idle') { spState.textContent = 'connected · paused'; spState.classList.add('ok'); }
+  else if (status === 'notrunning') spState.textContent = 'open Spotify to connect';
+  else if (status === 'denied') {
+    spState.textContent = 'blocked by macOS';
+    spState.classList.add('bad');
+    fix.classList.remove('hidden');
+  } else spState.textContent = 'unavailable';
+}
+if (!window.newon) setSpotifyState('unavailable');
 
 // ---- Lyrics (synced) ----
 const lyricEl = document.getElementById('lyric');
@@ -450,6 +470,32 @@ let camDist = 0;                    // distance travelled along the ride
 let lastFrameT = 0;
 let rotDir = 1;                     // trail-spin direction, flipped by hi-hats
 let prevTrebBeat = 0;
+
+// ---- Motion choreography ----
+// The ride is a sequence of smooth manoeuvres, not a constant forward push:
+// cruises, rushes, slow drifts, brief BACKWARDS pulls, lazy barrel spins
+// through the tunnel, and look-around turns where the gaze wanders off the
+// track while travel continues along it. New manoeuvres are picked when the
+// music changes section (or every few seconds as a fallback), and every value
+// eases with ~2s time constants, so nothing ever snaps.
+const motion = {
+  vel: 1.5, velTarget: 1.5,         // along-track speed; negative = backwards
+  spin: 0, spinVel: 0.12, spinVelTarget: 0.12,
+  yaw: 0, yawTarget: 0,
+  pitch: 0, pitchTarget: 0,
+  next: 0
+};
+function chooseMove(t) {
+  const r = Math.random();
+  if (r < 0.14) motion.velTarget = -(0.5 + Math.random() * 0.9);   // pull back
+  else if (r < 0.32) motion.velTarget = 0.35 + Math.random() * 0.5; // slow drift
+  else motion.velTarget = 1.1 + Math.random() * 1.4;                // cruise/rush
+  const s = Math.random();
+  motion.spinVelTarget = s < 0.3 ? 0 : (Math.random() * 2 - 1) * 0.45;
+  motion.yawTarget = Math.random() < 0.45 ? 0 : (Math.random() * 2 - 1) * 0.4;
+  motion.pitchTarget = Math.random() < 0.55 ? 0 : (Math.random() * 2 - 1) * 0.25;
+  motion.next = t + 4.5 + Math.random() * 5;
+}
 function frame() {
   if (viz) {
     viz.resize();
@@ -480,12 +526,22 @@ function frame() {
       if (k !== 'folds') genes[k] += (geneTarget[k] - genes[k]) * ease;
     }
 
-    // The rollercoaster throttle: the SONG owns the pedal. Tempo sets the
-    // cruise (a 90 BPM ballad ambles, a 160 BPM banger flies), loudness opens
-    // it up, bass slams it, kicks punch it. Near-silence = slow drift.
+    // Advance the choreography. The SONG still owns the pedal: tempo scales
+    // the cruise, loudness opens it up, kicks punch it — but the manoeuvre
+    // decides the direction and character of the motion.
+    if (audio.section || t > motion.next) chooseMove(t);
+    const mEase = 1 - Math.exp(-dt * 0.55);   // ~1.8s time constant
+    motion.vel += (motion.velTarget - motion.vel) * mEase;
+    motion.spinVel += (motion.spinVelTarget - motion.spinVel) * mEase;
+    motion.yaw += (motion.yawTarget - motion.yaw) * mEase * 0.7;
+    motion.pitch += (motion.pitchTarget - motion.pitch) * mEase * 0.7;
+    motion.spin += motion.spinVel * dt * (0.6 + audio.level);
     const tempo = audio.bpm / 120;
-    camDist += dt * (0.8 + (1.0 + genes.speed * 0.7) * tempo * (0.3 + audio.level * 2.2)
-                     + audio.bass * 4.5 + audio.beat * 3.0);
+    // Kicks only push when travelling forward — a backwards pull should feel
+    // like being drawn back, not fought over.
+    const punch = motion.vel > 0 ? audio.bass * 2.2 + audio.beat * 1.4 : 0;
+    camDist += dt * (motion.vel * (0.7 + genes.speed * 0.35) * tempo
+                     * (0.45 + audio.level * 1.6) + punch);
 
     viz.render(state.mode, {
       time: t,
@@ -506,6 +562,7 @@ function frame() {
       // The rest of the song: attenuated bands + pitch/flux/onset/hat-beat.
       aud0: [audio.subN, audio.lowMidN, audio.highMidN, audio.airN],
       aud1: [audio.centroid, audio.flux, audio.onset, audio.trebBeat],
+      motion: [motion.spin, motion.yaw, motion.pitch, 0],
       // Chromatic-aberration kick in the composite — the lens smears on hits.
       shift: Math.min(audio.bass * 0.8 + audio.beat * 0.8, 1.5),
       // Feedback-warp parameters (per frame, ~60fps). This is the heart of the
