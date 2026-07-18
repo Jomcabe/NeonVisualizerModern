@@ -174,13 +174,12 @@ void main(){
   vec3 ro = path(dd);
   vec3 ahead = path(dd + 3.5);
   vec3 acc2 = path(dd + 2.0) - 2.0 * path(dd + 1.0) + ro;
-  float roll = clamp(-acc2.x * 8.0, -0.45, 0.45)
-             + uGene3.y * 0.35 * sin(t * 0.16)
-             + uAud1.w * 0.05                        // faint hi-hat lean
+  float roll = clamp(-acc2.x * 6.0, -0.2, 0.2)      // a lean, never a slam
+             + uGene3.y * 0.25 * sin(t * 0.11)
              + uMotion.x;                            // slow barrel spin
-  // Gentle turbulence only — a hum, not a jackhammer.
-  ro.xy += (vec2(noise(vec2(t * 1.3, 3.7)), noise(vec2(7.7, t * 1.4))) - 0.5)
-           * (0.02 + bass * 0.10) * uGene3.z;
+  // Barely-there float — a raft on water, not turbulence.
+  ro.xy += (vec2(noise(vec2(t * 0.7, 3.7)), noise(vec2(7.7, t * 0.8))) - 0.5)
+           * (0.01 + bass * 0.04) * uGene3.z;
 
   vec3 fw = normalize(ahead - ro);
   vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
@@ -194,7 +193,7 @@ void main(){
   vec3 bx = rt * cr + up * sr;
   vec3 by = up * cr - rt * sr;
   // FOV eases wide on bass — the dip-in-the-stomach feel, kept subtle.
-  float fov = 1.05 - bass * 0.12 - uBeat * 0.05;
+  float fov = 1.05 - bass * 0.07 - uBeat * 0.025;
   vec3 rd = normalize(look * fov + uv.x * bx + uv.y * by);
 
   // ---- Volumetric neon march: everything is accumulated glow ----
@@ -221,28 +220,33 @@ void main(){
     an = abs(mod(an, k) - k * 0.5);
     float rad = length(pc);
     vec2 sec = vec2(cos(an), sin(an)) * rad;
+    // Liquid writhe: slow domain-warp melts the fractal walls like molten
+    // glass (the silky look of the original Neon), heaving with the low-mids.
+    sec += (vec2(noise(sec * 1.6 + vec2(0.0, t * 0.09)),
+                 noise(sec * 1.6 + vec2(5.2, t * 0.07))) - 0.5)
+           * (0.25 + uGene1.y * 0.35 + uAud0.y * 0.3);
 
     // The fractal carves the walls: orbit trap displaces the tunnel radius,
     // orbit sum paints it.
     vec2 tr = kali(vec3(sec * 0.6, sin(p.z * 0.11) * 1.2));
     float dWall = (tunnelR + (tr.x - 0.5) * detail) - rad;
 
-    // Tight falloff so the walls read as sharp neon filigree, not fog; the
+    // Soft-but-shaped falloff — silky glow, not fog and not wireframe; the
     // orbit-trap ridges get an extra hot line of light, and the "air" band
     // (cymbal shimmer) makes the ridges spit sparkle.
-    float g = exp(-abs(dWall) * (9.0 + treb * 5.0));
-    float ridge = exp(-tr.x * tr.x * 14.0);
+    float g = exp(-abs(dWall) * (6.0 + treb * 3.0));
+    float ridge = exp(-tr.x * tr.x * 10.0);
     float gw = g * (0.006 + lvl * 0.015 + ridge * (0.040 + lvl * 0.055 + uAud0.w * 0.045));
     wallI += gw;
     hueAcc += (tr.x * 1.3 + rad * 0.18) * gw;
 
     // Waveform filaments spiralling down the walls — the live music etched
     // into the space rushing past. High-mids (vocals, leads) light them up.
-    float fil = abs(fract(an * folds * 0.159 + p.z * 0.15 - t * 0.4) - 0.5);
+    float fil = abs(fract(an * folds * 0.159 + p.z * 0.12 - t * 0.25) - 0.5);
     float wv = wavS(p.z * 0.02 + t * 0.05);
-    col += spectrum(an * 0.5 + p.z * 0.01 + t * 0.2 + uAud1.x * 0.3)
-           * exp(-fil * fil * 60.0) * exp(-abs(dWall - 0.15) * 8.0)
-           * (0.012 + abs(wv) * 0.12 + uAud0.z * 0.16 + uBeat * 0.05);
+    col += spectrum(an * 0.5 + p.z * 0.01 + t * 0.12 + uAud1.x * 0.3)
+           * exp(-fil * fil * 30.0) * exp(-abs(dWall - 0.15) * 6.0)
+           * (0.010 + abs(wv) * 0.10 + uAud0.z * 0.12 + uBeat * 0.04);
 
     // The floating shapes: hot cores with soft halos. Kicks flash them,
     // onsets (any percussive hit) snap their glow tighter.
