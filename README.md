@@ -30,8 +30,11 @@ beat-reactive light show. No cables, no "share your screen" gymnastics — click
 | | |
 |---|---|
 | 🎧 **Hears your music** | Captures system audio via macOS ScreenCaptureKit loopback — reacts to Spotify, Apple Music, YouTube, anything. Falls back to the mic if needed. |
+| 🎢 **Flight mode** | The default look: a raymarched rollercoaster ride through a glowing fractal space. The camera rides a winding track it doesn't control — banking into turns, shuddering on bass, throttle slaved to the music — while abstract neon shapes (toruses, box frames, octahedra, orbs) tumble past. The walls are carved live by a Kali kaleidoscopic-IFS fractal. |
+| 🧬 **Visual DNA** | Every ~10–20 seconds (and sometimes right on a beat drop) the visuals re-roll their "genes" — fold symmetry, fractal offsets, twist, shape sizes, hues, ride speed — and morph into a form that was never hand-authored. Like the real Neon, it can take literally any shape; the same song never looks the same twice. Press `R` to force a new form. |
 | 🌈 **Neon light-forms + bloom** | The signature Xbox look: swarms of bright particle sprites (not vector lines), color-cycled across the spectrum, folded through kaleidoscope symmetry and driven into recursive light-tunnels by a strong bass-reactive video-feedback loop — the same feedback-zoom technique Jeff Minter's original Neon used. |
-| 🌀 **Feedback tunnel** | A second mode — a radial spoke/ring seed that the feedback zoom stretches into an endless receding tunnel, rushing and twisting on the beat. |
+| 🌀 **Feedback tunnel** | A radial spoke/ring seed that the feedback zoom stretches into an endless receding tunnel, rushing and twisting on the beat. |
+| 🎥 **Speed optics** | Beat-driven chromatic aberration, FOV lurches on bass hits, camera shake, film grain — the whole frame behaves like a lens strapped to the front car. |
 | 🎵 **Subtle now-playing** | Current track tucked in the corner (read straight from Spotify — no login). |
 | ✨ **Synced lyrics** | When available, the current lyric line is sprinkled in at the bottom, timed to playback (via [lrclib.net](https://lrclib.net)). |
 | 🎚 **Presets & sliders** | 7 neon palettes (incl. classic *Xbox Neon*), plus sensitivity, brightness, glow, and trail-length sliders. Optional auto-cycle. |
@@ -42,7 +45,8 @@ beat-reactive light show. No cables, no "share your screen" gymnastics — click
 |-----|--------|
 | `C` | Toggle the settings panel |
 | `F` | Toggle fullscreen |
-| `Space` | Switch visual mode |
+| `Space` | Cycle visual mode (Flight → Neon → Tunnel) |
+| `R` | Re-roll the visual DNA (instant new form) |
 | `Esc` | Exit fullscreen |
 
 ---
@@ -145,7 +149,8 @@ src/
 ├── renderer.js   Orchestration: audio capture, palettes, UI, lyric sync, loop
 ├── audio.js      Web Audio analyser → waveform + smoothed bass/mid/treble/level + beats
 ├── gl.js         WebGL2 pipeline: scene → feedback trails → bright-pass → blur → bloom
-└── shaders.js    GLSL: neon light-forms, tunnel, video feedback, bloom post shaders
+└── shaders.js    GLSL: raymarched fractal flight, neon light-forms, tunnel,
+                  video feedback, bloom + chromatic-aberration post shaders
 ```
 
 No runtime dependencies beyond Electron — the visuals are hand-written WebGL2,
