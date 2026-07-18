@@ -31,7 +31,8 @@ beat-reactive light show. No cables, no "share your screen" gymnastics — click
 |---|---|
 | 🎧 **Hears your music** | Captures system audio via macOS ScreenCaptureKit loopback — reacts to Spotify, Apple Music, YouTube, anything. Falls back to the mic if needed. |
 | 🎢 **Flight mode** | The default look: a raymarched rollercoaster ride through a glowing fractal space. The camera rides a winding track it doesn't control — banking into turns, shuddering on bass, throttle slaved to the music — while abstract neon shapes (toruses, box frames, octahedra, orbs) tumble past. The walls are carved live by a Kali kaleidoscopic-IFS fractal. |
-| 🧬 **Visual DNA** | Every ~10–20 seconds (and sometimes right on a beat drop) the visuals re-roll their "genes" — fold symmetry, fractal offsets, twist, shape sizes, hues, ride speed — and morph into a form that was never hand-authored. Like the real Neon, it can take literally any shape; the same song never looks the same twice. Press `R` to force a new form. |
+| 🧬 **Visual DNA** | When the *song* changes character — a drop, a chorus, the beat coming in — the visuals re-roll their "genes" (fold symmetry, fractal offsets, twist, shape sizes, hues, ride speed) and slam into a new form, the way [projectM](https://github.com/projectM-visualizer)/MilkDrop hard-cuts presets. Like the real Neon, it can take literally any shape; the same song never looks the same twice. Press `R` to force a new form. |
+| 🎼 **Every aspect of the song drives something** | projectM-school analysis: 7 frequency bands (each auto-levelled like MilkDrop's attenuated bands, so quiet tracks hit as hard as loud ones), kick + hi-hat beat detectors, broadband onset detection, spectral flux, spectral centroid, and a live tempo estimate. Sub-bass breathes the tunnel, kicks slam the throttle and dive the feedback zoom, low-mids heave the liquid warp, mids carve the fractal walls deeper, high-mids light the waveform filaments, hi-hats flick the camera roll and flip the trail spin, cymbal shimmer makes the ridges spark, the song's *pitch* steers the hue up and down the rainbow, onsets snap the floating shapes and twist the corkscrew, loudness opens the throttle, and the BPM sets the cruise speed and spin cadence. |
 | 🌈 **Neon light-forms + bloom** | The signature Xbox look: swarms of bright particle sprites (not vector lines), color-cycled across the spectrum, folded through kaleidoscope symmetry and driven into recursive light-tunnels by a strong bass-reactive video-feedback loop — the same feedback-zoom technique Jeff Minter's original Neon used. |
 | 🌀 **Feedback tunnel** | A radial spoke/ring seed that the feedback zoom stretches into an endless receding tunnel, rushing and twisting on the beat. |
 | 🎥 **Speed optics** | Beat-driven chromatic aberration, FOV lurches on bass hits, camera shake, film grain — the whole frame behaves like a lens strapped to the front car. |
@@ -85,6 +86,16 @@ xattr -cr /Applications/Newon.app
 ```
 
 Then launch with right-click → Open as usual.
+
+### "The Spotify now-playing / lyrics disappeared after an update"
+
+Nothing was removed. The now-playing overlay reads Spotify via AppleScript,
+which rides on the macOS **Automation** permission — and like Screen Recording,
+macOS ties that grant to the app's code signature, so **updating Newon can
+silently revoke it**. Newon now detects this and shows a banner with a
+one-click shortcut. To fix manually: **System Settings → Privacy & Security →
+Automation → Newon → turn Spotify ON**, then relaunch Newon. (If Newon isn't
+listed, launch it with Spotify playing and it will re-prompt.)
 
 ### "It keeps using my microphone instead of Spotify"
 

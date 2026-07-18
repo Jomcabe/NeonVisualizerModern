@@ -34,6 +34,11 @@ uniform vec4  uGene0;   // x fold count   y,z,w Kali fractal offsets
 uniform vec4  uGene1;   // x twist  y warp  z tunnel radius  w wall detail
 uniform vec4  uGene2;   // x hue speed  y hue phase  z shape size  w shape spacing
 uniform vec4  uGene3;   // x shape spin  y cam sway  z cam shake  w (spare)
+// The rest of the audio description (projectM-style: every aspect of the song
+// gets its own signal). Bands are the MilkDrop-attenuated versions, so quiet
+// tracks drive the visuals as hard as loud ones.
+uniform vec4  uAud0;    // x sub  y lowMid  z highMid  w air
+uniform vec4  uAud1;    // x centroid(pitch 0..1)  y flux  z onset  w trebBeat
 
 // Live audio waveform, -1..1, sampled along 0..1 (wraps).
 float wav(float x){ return texture(uWave, vec2(fract(x), 0.5)).r * 2.0 - 1.0; }
@@ -164,7 +169,8 @@ void main(){
   vec3 acc2 = path(dd + 2.0) - 2.0 * path(dd + 1.0) + ro;
   float roll = clamp(-acc2.x * 3.0, -1.2, 1.2)
              + uGene3.y * sin(t * 0.23)
-             + sin(t * 11.0) * 0.04 * bass;          // bass shudder
+             + sin(t * 11.0) * 0.04 * bass           // bass shudder
+             + uAud1.w * 0.16;                       // hi-hat / snare roll flick
   // Turbulence shake, heavier when the music slams.
   ro.xy += (vec2(noise(vec2(t * 2.1, 3.7)), noise(vec2(7.7, t * 2.3))) - 0.5)
            * (0.06 + bass * 0.30) * uGene3.z;
@@ -188,12 +194,18 @@ void main(){
   float folds = max(uGene0.x, 2.0);
   float k = 6.28318 / folds;
   float td = 0.06;
+  // Per-band scene parameters, computed once:
+  //   sub-bass breathes the whole tunnel, mids carve the wall detail deeper,
+  //   spectral flux writhes the corkscrew twist.
+  float tunnelR = uGene1.z * (1.0 - uAud0.x * 0.22);
+  float detail  = uGene1.w * (0.55 + uMid * uSensitivity * 1.5);
+  float twist   = uGene1.x * 0.22 * (1.0 + uAud1.y * 0.35);
   for(int i = 0; i < 58; i++){
     vec3 p = ro + rd * td;
     vec2 pc = p.xy - path(p.z).xy;
 
     // Kaleido-fold the cross-section and corkscrew it along the track.
-    float an = atan(pc.y, pc.x) + p.z * uGene1.x * 0.22;
+    float an = atan(pc.y, pc.x) + p.z * twist;
     an = abs(mod(an, k) - k * 0.5);
     float rad = length(pc);
     vec2 sec = vec2(cos(an), sin(an)) * rad;
@@ -201,31 +213,33 @@ void main(){
     // The fractal carves the walls: orbit trap displaces the tunnel radius,
     // orbit sum paints it.
     vec2 tr = kali(vec3(sec * 0.6, sin(p.z * 0.11) * 1.2));
-    float dWall = (uGene1.z + (tr.x - 0.5) * uGene1.w) - rad;
+    float dWall = (tunnelR + (tr.x - 0.5) * detail) - rad;
 
     // Tight falloff so the walls read as sharp neon filigree, not fog; the
-    // orbit-trap ridges get an extra hot line of light.
+    // orbit-trap ridges get an extra hot line of light, and the "air" band
+    // (cymbal shimmer) makes the ridges spit sparkle.
     float g = exp(-abs(dWall) * (9.0 + treb * 5.0));
     float ridge = exp(-tr.x * tr.x * 14.0);
-    float gw = g * (0.006 + lvl * 0.015 + ridge * (0.040 + lvl * 0.070));
+    float gw = g * (0.006 + lvl * 0.015 + ridge * (0.040 + lvl * 0.055 + uAud0.w * 0.045));
     wallI += gw;
     hueAcc += (tr.x * 1.3 + rad * 0.18) * gw;
 
     // Waveform filaments spiralling down the walls — the live music etched
-    // into the space rushing past.
+    // into the space rushing past. High-mids (vocals, leads) light them up.
     float fil = abs(fract(an * folds * 0.159 + p.z * 0.15 - t * 0.4) - 0.5);
     float wv = wavS(p.z * 0.02 + t * 0.05);
-    col += spectrum(an * 0.5 + p.z * 0.01 + t * 0.2)
+    col += spectrum(an * 0.5 + p.z * 0.01 + t * 0.2 + uAud1.x * 0.3)
            * exp(-fil * fil * 60.0) * exp(-abs(dWall - 0.15) * 8.0)
-           * (0.015 + abs(wv) * 0.15 + uBeat * 0.06);
+           * (0.012 + abs(wv) * 0.12 + uAud0.z * 0.16 + uBeat * 0.05);
 
-    // The floating shapes: hot cores with soft halos, flashing on beats.
+    // The floating shapes: hot cores with soft halos. Kicks flash them,
+    // onsets (any percussive hit) snap their glow tighter.
     float sh;
     float dS = shapes(p, sh);
-    float sg = exp(-abs(dS) * (9.0 - uBeat * 3.0));
-    col += (mix(pal(sh + t * 0.1), spectrum(sh + t * uGene2.x + uGene2.y), 0.65)
+    float sg = exp(-abs(dS) * (9.0 - uBeat * 3.0 + uAud1.z * 4.0));
+    col += (mix(pal(sh + t * 0.1), spectrum(sh + t * uGene2.x + uGene2.y + uAud1.x * 0.4), 0.65)
             + uBeat * 0.4)
-           * sg * (0.03 + lvl * 0.07 + uBeat * 0.08);
+           * sg * (0.03 + lvl * 0.07 + uBeat * 0.08 + uAud1.z * 0.05);
 
     // Sphere-trace-ish stepping that never stalls inside the glow.
     float dStep = min(abs(dWall), abs(dS));
@@ -233,13 +247,15 @@ void main(){
     if(td > 26.0) break;
   }
 
-  // Colourise the wall glow: one clean hue per ray, cycled by the gene clock.
+  // Colourise the wall glow: one clean hue per ray, cycled by the gene clock
+  // and steered live by the spectral centroid — when the song's pitch climbs,
+  // the whole space slides up the rainbow with it.
   // The soft-contrast curve starves diffuse fog and keeps the hot filigree,
   // so the frame stays black-backed neon instead of hazing over.
   float hue = hueAcc / max(wallI, 1e-4);
   wallI = wallI * wallI / (wallI + 0.8);
-  col += mix(pal(hue * 0.45 + uGene2.y),
-             spectrum(hue + t * uGene2.x + uGene2.y), 0.6) * wallI;
+  col += mix(pal(hue * 0.45 + uGene2.y + uAud1.x * 0.25),
+             spectrum(hue + t * uGene2.x + uGene2.y + uAud1.x * 0.45), 0.6) * wallI;
 
   col += spectrum(t * 0.3) * uBeat * 0.10;   // whole-field beat flash
   col *= 0.50 + lvl * 0.90 + bass * 0.40;
@@ -286,7 +302,7 @@ void main(){
   // melts like a lava lamp. Bass makes the warp heave; the gene scales it.
   vec2 warp = vec2(fbm(q * 2.3 + t * 0.20),
                    fbm(q * 2.3 - t * 0.15 + 7.0));
-  q += (warp - 0.5) * (0.20 + uGene1.y * 0.25 + bass * 0.7);
+  q += (warp - 0.5) * (0.20 + uGene1.y * 0.25 + bass * 0.55 + uAud0.y * 0.4);
   float rad = length(q);
 
   vec3 col = vec3(0.0);
@@ -296,7 +312,8 @@ void main(){
                + sin(q.y * 5.3 - t * 1.3)
                + sin((q.x + q.y) * 4.7 + t * 0.7)
                + fbm(q * 3.0 - t * 0.25) * 3.0;
-  col += spectrum(plasma * 0.09 + t * 0.05 + uGene2.y) * (0.10 + lvl * 0.35);
+  col += spectrum(plasma * 0.09 + t * 0.05 + uGene2.y + uAud1.x * 0.3)
+         * (0.08 + lvl * 0.30 + uAud0.w * 0.15);
 
   // --- Particle swarm: points of light, rainbow colour-cycled ---
   const int N = 46;
@@ -313,8 +330,8 @@ void main(){
     float glow = sz / (d * d + sz * 0.7);                // bright core + soft halo
     // Blend the user's palette with the full rainbow for vivid, shifting hues.
     vec3 c = mix(pal(fi * 0.041 + t * 0.18 + r * 0.25),
-                 spectrum(fi * 0.03 + t * 0.25 + r * 0.4 + uGene2.y), 0.55);
-    col += c * glow * (0.35 + abs(w) * 0.7 + uBeat * 0.6);
+                 spectrum(fi * 0.03 + t * 0.25 + r * 0.4 + uGene2.y + uAud1.x * 0.4), 0.55);
+    col += c * glow * (0.35 + abs(w) * 0.7 + uBeat * 0.6 + uAud1.z * 0.5);
   }
   col /= float(N) * 0.06;
 
@@ -325,7 +342,8 @@ void main(){
     float ripple = wavS(fract(atan(q.y, q.x) / 6.28318) + fj * 0.5 + t * 0.05);
     float dr     = rad - (base + ripple * (0.12 + bass * 0.35));
     float ring   = exp(-dr * dr * 900.0);
-    col += spectrum(rad * 0.5 + t * 0.2 + fj * 0.3) * ring * (0.6 + treb * 0.8);
+    col += spectrum(rad * 0.5 + t * 0.2 + fj * 0.3 + uAud1.x * 0.3)
+           * ring * (0.5 + treb * 0.7 + uAud0.z * 0.5);
   }
 
   // Beat = a strobing multicolour bloom of the whole field.
@@ -350,8 +368,10 @@ void main(){
 
   float rad = length(uv);
   // Swirl the tunnel — the angle twists with depth and time, so the whole
-  // thing corkscrews as the feedback zoom rushes you down it (the rollercoaster).
-  float ang = atan(uv.y, uv.x) + sin(rad * 3.5 - uTime * (0.8 + bass * 1.5)) * 0.5;
+  // thing corkscrews as the feedback zoom rushes you down it (the
+  // rollercoaster). Spectral flux writhes the twist harder.
+  float ang = atan(uv.y, uv.x)
+            + sin(rad * 3.5 - uTime * (0.8 + bass * 1.5)) * (0.4 + uAud1.y * 0.25);
 
   // Spoke count rides the gene fold count; beats twist the fold.
   float seg  = max(uGene0.x, 2.0) * 2.0;
@@ -362,15 +382,17 @@ void main(){
   float w     = wavS(fang * seg * 0.1 + uTime * 0.04);
   float spoke = exp(-pow(fang * seg, 2.0) * 0.6) * (0.6 + 0.8 * abs(w));
 
-  // Concentric rings rushing outward, faster on bass.
-  float rings = 0.5 + 0.5 * sin(rad * 22.0 - uTime * (3.0 + bass * 6.0) + uBeat * 4.0);
+  // Concentric rings rushing outward, faster on bass; ring density breathes
+  // with the sub-bass and every onset shoves them forward.
+  float rings = 0.5 + 0.5 * sin(rad * (22.0 - uAud0.x * 6.0)
+                                - uTime * (3.0 + bass * 6.0) + uBeat * 4.0 + uAud1.z * 2.0);
   rings = pow(rings, 3.0);
 
   float falloff = clamp(1.0 / (rad * 1.8 + 0.25), 0.0, 1.8);
   float pat = spoke * (0.4 + 0.6 * rings) * falloff;
 
-  vec3 col = spectrum(rad * 0.6 - uTime * 0.25 + w * 0.3 + uGene2.y) * pat;
-  col += spectrum(uTime * 0.3) * uBeat * 0.4 * spoke * falloff; // beat lights it up
+  vec3 col = spectrum(rad * 0.6 - uTime * 0.25 + w * 0.3 + uGene2.y + uAud1.x * 0.35) * pat;
+  col += spectrum(uTime * 0.3) * (uBeat * 0.4 + uAud0.z * 0.3) * spoke * falloff;
 
   col *= 0.4 + uLevel * 1.4 + bass * 0.8;
   col *= 0.55 + uBrightness;
