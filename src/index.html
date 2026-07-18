@@ -47,16 +47,21 @@
          switching to the mic, we explain the (required) macOS flow. -->
     <div class="gate-card hidden" id="gatePerm">
       <div class="logo small">NEWON</div>
-      <h2 class="perm-title">One-time macOS permission</h2>
+      <h2 class="perm-title">Let Newon hear your Mac</h2>
       <p class="perm-body">
         macOS routes system-audio capture through <b>Screen&nbsp;Recording</b>
-        permission. Turn <b>Newon</b> on under Screen&nbsp;Recording, then
-        <b>fully quit and relaunch</b> — permission changes never apply to an
-        already-running app. Newon only reads the audio; it never records or
-        transmits your screen.
+        permission. In that list:
       </p>
+      <ol class="perm-steps">
+        <li>Turn <b>Newon</b> on (first time only).</li>
+        <li><b>Already shows enabled but still silent?</b> The grant went stale
+          after an update. Select Newon and click the <b>“–”</b> button to
+          <b>remove</b> it — toggling off/on will <i>not</i> fix it.</li>
+        <li><b>Fully quit and relaunch</b> Newon, then add it back when asked.</li>
+      </ol>
+      <p class="perm-body">Newon only reads the audio — it never records or transmits your screen.</p>
       <button id="permOpenBtn">Open Screen Recording Settings</button>
-      <button id="permRetryBtn" class="ghost">I've granted it — try again</button>
+      <button id="permRetryBtn" class="ghost">I've done that — try again</button>
       <button id="micFallbackBtn" class="linklike">Use my microphone instead</button>
     </div>
   </div>
