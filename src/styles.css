@@ -107,6 +107,12 @@ body.idle { cursor: none; }
   opacity: 0.72; text-align: left;
 }
 .perm-body b { color: #fff; opacity: 0.95; }
+.perm-steps {
+  margin: 10px 0 4px; padding-left: 20px; text-align: left;
+  font-size: 12.5px; line-height: 1.55; opacity: 0.78;
+}
+.perm-steps li { margin-bottom: 7px; }
+.perm-steps b { color: #fff; opacity: 0.95; }
 #permOpenBtn {
   margin-top: 22px; padding: 13px 26px;
   font-size: 14.5px; font-weight: 700; letter-spacing: 0.3px;

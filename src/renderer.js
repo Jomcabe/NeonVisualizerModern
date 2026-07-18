@@ -63,11 +63,16 @@ async function beginListening({ allowMic }) {
   startBtn.textContent = 'Connecting…';
   hideGateError();
 
+  // getMediaAccessStatus('screen') is INFORMATIONAL ONLY. It is unreliable for
+  // ad-hoc-signed apps — it can read non-"granted" even when Screen Recording is
+  // actually on and loopback works — so it must NEVER gate a working capture.
+  // Trusting it (and a track's momentary `muted` flag) is exactly what made a
+  // genuinely granted permission look broken.
   const access = window.newon ? await window.newon.checkScreenAccess() : 'granted';
 
   // ALWAYS attempt the system-audio (loopback) capture — main.js supplies the
-  // screen source + audio:'loopback'. This is the call that triggers the macOS
-  // Screen Recording prompt on first run.
+  // screen source + audio:'loopback'. This also triggers the macOS Screen
+  // Recording prompt on first run.
   let sysStream = null;
   try {
     sysStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
@@ -75,22 +80,24 @@ async function beginListening({ allowMic }) {
     sysStream = null;
   }
   const sysTrack = sysStream && sysStream.getAudioTracks()[0];
-  const gotSystemAudio = access === 'granted' && sysTrack && !sysTrack.muted;
 
-  if (gotSystemAudio) {
+  // Accept ANY live loopback audio track. Whether audio *actually flows* is
+  // decided empirically by the probe below — not by the flaky permission API.
+  if (sysTrack && sysTrack.readyState === 'live') {
     try {
       await audio.start(sysStream);
-      return succeed();
+      succeed();
+      startAudioProbe();
+      return;
     } catch (err) {
       stopStream(sysStream);
     }
   } else if (sysStream) {
-    // Loopback resolved but permission isn't truly granted yet (silent track).
-    // Don't feed silence and don't hijack the mic — release it.
     stopStream(sysStream);
   }
 
-  // No usable system audio. Only touch the microphone if the user asked for it.
+  // getDisplayMedia gave us nothing usable (threw, or no audio track at all).
+  // Only touch the microphone if the user explicitly asked for it.
   if (allowMic) {
     try {
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -128,13 +135,46 @@ function showGateError(msg) {
   el.classList.remove('hidden');
 }
 
-// The mic is now a deliberate opt-in; show a dismissible banner so it's never a
+// After starting a loopback stream, verify audio ACTUALLY flows. macOS can show
+// Newon's Screen Recording checkbox as ON yet send pure silence: the grant goes
+// stale whenever the app's ad-hoc code signature changes on a rebuild/update,
+// and toggling it off/on reuses the same stale entry. REMOVING Newon from the
+// list (the "–" button) and re-adding it is what actually fixes it. If no audio
+// arrives within a few seconds, say so plainly instead of pretending it worked.
+let probe = null;
+function startAudioProbe() {
+  hidePermHint();
+  probe = { start: performance.now(), seen: false };
+}
+function checkAudioProbe() {
+  if (!probe) return;
+  if (audio.level > 0.01) {                 // real signal — it's working
+    probe = null;
+    hidePermHint();
+  } else if (performance.now() - probe.start > 6000) {
+    probe = null;
+    showStalePermBanner();
+  }
+}
+function showStalePermBanner() {
+  document.getElementById('permHint-msg').textContent =
+    'No system audio is coming through. If you just enabled Screen Recording, ' +
+    'fully quit and relaunch Newon. If it already shows enabled, the grant went ' +
+    'stale after an update — REMOVE Newon with the “–” button (toggling off/on ' +
+    'will NOT fix it), then relaunch and add it back when prompted.';
+  document.getElementById('permHint').classList.remove('hidden');
+}
+function hidePermHint() {
+  document.getElementById('permHint').classList.add('hidden');
+}
+
+// The mic is a deliberate opt-in; show a dismissible banner so it's never a
 // surprise, with a shortcut to fix Screen Recording for full system audio.
 function showMicNotice() {
-  const el = document.getElementById('permHint');
+  probe = null;
   document.getElementById('permHint-msg').textContent =
     'Using your microphone. For Spotify audio directly, grant Newon Screen Recording and relaunch.';
-  el.classList.remove('hidden');
+  document.getElementById('permHint').classList.remove('hidden');
 }
 document.getElementById('permHint-btn').addEventListener('click', () => {
   window.newon && window.newon.openScreenRecordingSettings();
@@ -342,6 +382,7 @@ function frame() {
   if (viz) {
     viz.resize();
     audio.update();
+    checkAudioProbe();
     const p = PALETTES[state.palette];
     const t = (performance.now() - start) / 1000;
     viz.render(state.mode, {
