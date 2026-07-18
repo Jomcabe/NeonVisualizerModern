@@ -32,7 +32,7 @@ beat-reactive light show. No cables, no "share your screen" gymnastics — click
 | 🎧 **Hears your music** | Captures system audio via macOS ScreenCaptureKit loopback — reacts to Spotify, Apple Music, YouTube, anything. Falls back to the mic if needed. |
 | 🌈 **Neon light-forms + bloom** | The signature Xbox look: swarms of bright particle sprites (not vector lines), color-cycled across the spectrum, folded through kaleidoscope symmetry and driven into recursive light-tunnels by a strong bass-reactive video-feedback loop — the same feedback-zoom technique Jeff Minter's original Neon used. |
 | 🌀 **Feedback tunnel** | A second mode — a radial spoke/ring seed that the feedback zoom stretches into an endless receding tunnel, rushing and twisting on the beat. |
-| 🎵 **Subtle now-playing** | Current track tucked in the corner (read straight from Spotify — no login). |
+| 🎵 **Now-playing (any device)** | Log in with your Spotify account once and Newon shows the current track — playing on desktop, web, or phone. Falls back to the Spotify desktop app via AppleScript if you don't connect. |
 | ✨ **Synced lyrics** | When available, the current lyric line is sprinkled in at the bottom, timed to playback (via [lrclib.net](https://lrclib.net)). |
 | 🎚 **Presets & sliders** | 7 neon palettes (incl. classic *Xbox Neon*), plus sensitivity, brightness, glow, and trail-length sliders. Optional auto-cycle. |
 
@@ -81,6 +81,22 @@ xattr -cr /Applications/Newon.app
 ```
 
 Then launch with right-click → Open as usual.
+
+### Connecting Spotify (now-playing / lyrics)
+
+Open the settings panel (gear or **C**) and click **Spotify → Connect**. Because
+Spotify requires every app to have its own **Client ID**, there's a one-time
+setup the first time:
+
+1. Open the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+   and **Create app** (any name; tick **Web API**).
+2. Add this exact **Redirect URI** and save: `http://127.0.0.1:8888/callback`
+3. Copy the app's **Client ID**, paste it into Newon, and click **Connect** — a
+   browser tab opens to approve access, then you're done. The login persists.
+
+Once connected, Newon reads whatever you're playing on **any** device (desktop,
+web, or phone). Without connecting, it falls back to reading the Spotify desktop
+app locally (which needs the app running and Automation permission).
 
 ### "It keeps using my microphone instead of Spotify"
 

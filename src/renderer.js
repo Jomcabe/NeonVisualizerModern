@@ -237,6 +237,81 @@ document.getElementById('showLyrics').addEventListener('change', (e) => {
 });
 document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
 
+// ---- Spotify (Web API login) ----
+const spotifyBtn = document.getElementById('spotifyBtn');
+const spotifyGate = document.getElementById('spotifyGate');
+let spotifyConnected = false;
+
+function renderSpotifyBtn() {
+  spotifyBtn.textContent = spotifyConnected ? 'Connected ✓' : 'Connect';
+  spotifyBtn.classList.toggle('connected', spotifyConnected);
+}
+
+async function refreshSpotifyState() {
+  if (!window.newon || !window.newon.spotifyGetState) { spotifyBtn.style.display = 'none'; return; }
+  const s = await window.newon.spotifyGetState();
+  spotifyConnected = !!s.connected;
+  renderSpotifyBtn();
+}
+
+if (window.newon && window.newon.spotifyGetState) {
+  refreshSpotifyState();
+  if (window.newon.onSpotifyState) {
+    window.newon.onSpotifyState((s) => { spotifyConnected = !!s.connected; renderSpotifyBtn(); });
+  }
+
+  spotifyBtn.addEventListener('click', async () => {
+    if (spotifyConnected) {
+      await window.newon.spotifyDisconnect();
+      spotifyConnected = false;
+      renderSpotifyBtn();
+      return;
+    }
+    const s = await window.newon.spotifyGetState();
+    if (!s.hasClientId) { showSpotifyGate(); return; }
+    connectSpotify();
+  });
+
+  document.getElementById('spCancelBtn').addEventListener('click', () => spotifyGate.classList.add('hidden'));
+  document.getElementById('spDashBtn').addEventListener('click', () =>
+    window.newon.openExternal('https://developer.spotify.com/dashboard'));
+  document.getElementById('spCopyBtn').addEventListener('click', () => {
+    navigator.clipboard && navigator.clipboard.writeText('http://127.0.0.1:8888/callback');
+    document.getElementById('spCopyBtn').textContent = 'copied';
+  });
+  document.getElementById('spConnectBtn').addEventListener('click', async () => {
+    const id = document.getElementById('spClientId').value.trim();
+    if (!id) { showSpotifyError('Paste your Client ID first.'); return; }
+    await window.newon.spotifySetClient(id);
+    spotifyGate.classList.add('hidden');
+    connectSpotify();
+  });
+} else {
+  spotifyBtn.style.display = 'none';
+}
+
+function showSpotifyGate() {
+  document.getElementById('spError').classList.add('hidden');
+  spotifyGate.classList.remove('hidden');
+}
+function showSpotifyError(msg) {
+  const el = document.getElementById('spError');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+async function connectSpotify() {
+  spotifyBtn.textContent = 'Connecting…';
+  const r = await window.newon.spotifyConnect();
+  if (r && r.ok) {
+    spotifyConnected = true;
+    renderSpotifyBtn();
+  } else {
+    renderSpotifyBtn();
+    if (r && r.error === 'no-client-id') showSpotifyGate();
+    else { showSpotifyGate(); showSpotifyError('Connection failed (' + (r && r.error || 'unknown') + '). Check the Client ID and that the Redirect URI is saved exactly.'); }
+  }
+}
+
 // ---- Keyboard shortcuts ----
 window.addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') panel.classList.toggle('hidden');

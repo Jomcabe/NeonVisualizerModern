@@ -66,6 +66,32 @@
     </div>
   </div>
 
+  <!-- One-time Spotify setup (needs your own Client ID; Spotify requires it) -->
+  <div id="spotifyGate" class="hidden">
+    <div class="gate-card">
+      <div class="logo small">NEWON</div>
+      <h2 class="perm-title">Connect Spotify</h2>
+      <p class="perm-body">
+        Newon reads your currently-playing track straight from your Spotify
+        account — any device, no desktop app needed. Spotify requires each app to
+        have its own <b>Client ID</b>, so this is a one-time setup:
+      </p>
+      <ol class="perm-steps">
+        <li>Open the <b>Spotify Developer Dashboard</b> and <b>Create app</b>
+          (any name; check the <b>Web API</b> box).</li>
+        <li>Add this exact <b>Redirect URI</b> and save:
+          <code id="spRedirect">http://127.0.0.1:8888/callback</code>
+          <button id="spCopyBtn" class="linklike">copy</button></li>
+        <li>Copy the app's <b>Client ID</b> and paste it below.</li>
+      </ol>
+      <input id="spClientId" type="text" placeholder="Paste your Spotify Client ID" autocomplete="off" spellcheck="false" />
+      <button id="spConnectBtn">Connect Spotify</button>
+      <button id="spDashBtn" class="ghost">Open Spotify Developer Dashboard</button>
+      <button id="spCancelBtn" class="linklike">Cancel</button>
+      <p id="spError" class="error hidden"></p>
+    </div>
+  </div>
+
   <!-- Controls (toggle with the gear or the "C" key) -->
   <button id="gear" title="Settings (C)">⚙</button>
   <div id="panel" class="hidden">
@@ -82,6 +108,10 @@
     <div class="panel-row">
       <span class="panel-label">Palette</span>
       <select id="paletteSel"></select>
+    </div>
+    <div class="panel-row">
+      <span class="panel-label">Spotify</span>
+      <button id="spotifyBtn" class="pill">Connect</button>
     </div>
     <label class="slider-row">Sensitivity <input id="sensitivity" type="range" min="0.3" max="2.5" step="0.05" value="1.1" /></label>
     <label class="slider-row">Brightness <input id="brightness" type="range" min="0" max="1.2" step="0.02" value="0.35" /></label>
