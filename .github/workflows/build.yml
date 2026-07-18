@@ -45,10 +45,16 @@ jobs:
         run: echo "v=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       # Publish a Release (what the README "Download" button points at) when a
-      # v* tag is pushed, OR when this workflow is run manually from the Actions
-      # tab — the manual run tags the release from package.json's version.
+      # v* tag is pushed, when this workflow is run manually from the Actions
+      # tab, or on pushes to main / the active release branch — the release is
+      # tagged from package.json's version, so bumping the version and pushing
+      # is all it takes to ship a new downloadable build.
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: >-
+          startsWith(github.ref, 'refs/tags/v') ||
+          github.event_name == 'workflow_dispatch' ||
+          github.ref == 'refs/heads/main' ||
+          github.ref == 'refs/heads/claude/xbox-360-neon-visuals-3teotf'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.v }}

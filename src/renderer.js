@@ -18,8 +18,10 @@ const PALETTES = [
   { name: 'Ice', a: '#7ee8fa', b: '#eec0c6', c: '#4a90e2' }
 ];
 
+const MODES = ['flight', 'neon', 'tunnel'];
+
 const state = {
-  mode: 'neon',
+  mode: 'flight',
   palette: 0,
   sensitivity: 1.1,
   brightness: 0.35,
@@ -225,7 +227,8 @@ document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
 window.addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') panel.classList.toggle('hidden');
   else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
-  else if (e.key === ' ') { state.mode = state.mode === 'neon' ? 'tunnel' : 'neon'; syncModeButtons(); }
+  else if (e.key === ' ') { state.mode = MODES[(MODES.indexOf(state.mode) + 1) % MODES.length]; syncModeButtons(); }
+  else if (e.key === 'r' || e.key === 'R') rerollGenes(); // instant new form
   else if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen();
 });
 function syncModeButtons() {
@@ -265,7 +268,7 @@ setInterval(() => {
   // Every other tick, switch visual mode too; the feedback trails carry over,
   // so the handoff reads as a morph rather than a hard cut.
   if (cycleTick % 2 === 0) {
-    state.mode = state.mode === 'neon' ? 'tunnel' : 'neon';
+    state.mode = MODES[(MODES.indexOf(state.mode) + 1) % MODES.length];
     syncModeButtons();
   }
 }, 18000);
@@ -374,10 +377,52 @@ function updateLyrics() {
   }
 }
 
+// ---- Visual DNA ("genes") ----
+// Every ~10-20 seconds (and occasionally right on a beat) the visual DNA
+// re-rolls: fold symmetry, Kali-fractal offsets, tunnel radius, twist, shape
+// sizes and tumbling speed, hue behaviour, ride speed. Continuous genes ease
+// toward their new targets over several seconds so the picture *morphs* into
+// each new form; the fold count snaps (a new symmetry reads as a new preset,
+// exactly how the original Neon jumps between forms). The result: the same
+// song never looks the same twice.
+function makeGenes() {
+  const r = Math.random;
+  return {
+    folds: 2 + Math.floor(r() * 5),        // 2..6-fold kaleido symmetry
+    kx: 0.45 + r() * 1.05,                 // Kali IFS offset — the fractal's
+    ky: 0.45 + r() * 1.05,                 // whole character lives in these
+    kz: 0.35 + r() * 0.85,
+    twist: (r() * 2 - 1) * 1.4,            // corkscrew along the track
+    warp: 0.2 + r() * 1.0,                 // liquid domain-warp amount
+    radius: 1.15 + r() * 1.35,             // tunnel radius
+    detail: 0.35 + r() * 1.05,             // fractal wall displacement
+    hueSpeed: 0.06 + r() * 0.22,
+    huePhase: r(),
+    shapeSize: 0.24 + r() * 0.42,          // floating-shape scale
+    spread: 1.9 + r() * 2.3,               // spacing between floating shapes
+    spin: (r() * 2 - 1) * 2.2,             // shape tumble speed/direction
+    sway: (r() * 2 - 1) * 0.55,            // extra camera roll wander
+    shake: 0.25 + r() * 0.75,              // turbulence intensity
+    speed: 1.6 + r() * 2.8                 // base ride speed
+  };
+}
+
+const genes = makeGenes();          // eased, live values fed to the shaders
+let geneTarget = makeGenes();
+let nextRoll = 0;
+function rerollGenes() {
+  geneTarget = makeGenes();
+  genes.folds = geneTarget.folds;   // symmetry snaps — reads as a new preset
+  nextRoll = perfT() + 9 + Math.random() * 11;
+}
+function perfT() { return (performance.now() - start) / 1000; }
+
 // ---- Main loop ----
 window.addEventListener('resize', () => viz && viz.resize());
 
 const start = performance.now();
+let camDist = 0;                    // distance travelled along the ride
+let lastFrameT = 0;
 function frame() {
   if (viz) {
     viz.resize();
@@ -385,6 +430,23 @@ function frame() {
     checkAudioProbe();
     const p = PALETTES[state.palette];
     const t = (performance.now() - start) / 1000;
+    const dt = Math.min(Math.max(t - lastFrameT, 0), 0.05);
+    lastFrameT = t;
+
+    // Mutate the DNA: scheduled re-rolls, plus a small chance that a hard
+    // beat slams the picture into a new form mid-song.
+    if (t > nextRoll) rerollGenes();
+    else if (audio.beat >= 1 && Math.random() < 0.03) rerollGenes();
+    const ease = 1 - Math.exp(-dt * 0.5);   // ~2s half-life morph
+    for (const k in genes) {
+      if (k !== 'folds') genes[k] += (geneTarget[k] - genes[k]) * ease;
+    }
+
+    // The rollercoaster throttle: always rolling forward, but the music owns
+    // the pedal — level opens it up, bass slams it, beats kick it.
+    camDist += dt * (1.6 + genes.speed * (0.5 + audio.level * 1.7)
+                     + audio.bass * 5.0 + audio.beat * 3.5);
+
     viz.render(state.mode, {
       time: t,
       level: audio.level,
@@ -396,19 +458,34 @@ function frame() {
       sensitivity: state.sensitivity,
       brightness: state.brightness,
       bloom: state.bloom,
+      dist: camDist,
+      gene0: [genes.folds, genes.kx, genes.ky, genes.kz],
+      gene1: [genes.twist, genes.warp, genes.radius, genes.detail],
+      gene2: [genes.hueSpeed, genes.huePhase, genes.shapeSize, genes.spread],
+      gene3: [genes.spin, genes.sway, genes.shake, 0],
+      // Chromatic-aberration kick in the composite — the lens smears on hits.
+      shift: Math.min(audio.bass * 0.8 + audio.beat * 0.8, 1.5),
       // Feedback-warp parameters (per frame, ~60fps). This is the heart of the
       // Neon look. A slow zoom LFO makes the picture surge inward (>1, diving
       // INTO the tunnel) then pull back — the rollercoaster rush — with bass and
       // beats punching it deeper. Rotation wanders and reverses so the trails
       // corkscrew, and a strong hue drift rainbows them (60s video-feedback).
-      decay: state.mode === 'tunnel' ? 0.70 + state.trails * 0.22 : 0.86 + state.trails * 0.11,
-      rot: Math.sin(t * 0.06) * 0.02 + Math.sin(t * 0.017) * 0.02 + audio.beat * 0.03
-           + (state.mode === 'tunnel' ? 0.012 : 0.005),
+      // Flight supplies its own camera motion, so its feedback stays short and
+      // near-static — just enough afterglow to melt the frames together.
+      decay: state.mode === 'flight' ? 0.60 + state.trails * 0.24
+           : state.mode === 'tunnel' ? 0.70 + state.trails * 0.22
+           : 0.86 + state.trails * 0.11,
+      rot: state.mode === 'flight'
+           ? Math.sin(t * 0.11) * 0.004 + audio.beat * 0.010
+           : Math.sin(t * 0.06) * 0.02 + Math.sin(t * 0.017) * 0.02 + audio.beat * 0.03
+             + (state.mode === 'tunnel' ? 0.012 : 0.005),
       // Base < 1 (drifting outward) + a rush LFO that periodically crosses 1.0
       // to dive in; bass/beat pull you deeper still.
-      zoom: (state.mode === 'tunnel' ? 0.984 : 0.992)
-            + Math.sin(t * 0.13) * 0.016 - 0.006
-            - audio.bass * 0.030 - audio.beat * 0.022,
+      zoom: state.mode === 'flight'
+            ? 0.997 - audio.beat * 0.006
+            : (state.mode === 'tunnel' ? 0.984 : 0.992)
+              + Math.sin(t * 0.13) * 0.016 - 0.006
+              - audio.bass * 0.030 - audio.beat * 0.022,
       hueDrift: 0.035,
       colA: hex(p.a),
       colB: hex(p.b),

@@ -19,6 +19,7 @@ class GLViz {
     const S = window.NewonShaders;
     this.quad = this._quad();
     this.programs = {
+      flight: this._program(S.VERT, S.scenes.flight),
       neon: this._program(S.VERT, S.scenes.neon),
       tunnel: this._program(S.VERT, S.scenes.tunnel),
       feedback: this._program(S.VERT, S.FRAG_FEEDBACK),
@@ -140,8 +141,12 @@ class GLViz {
 
     const bw = Math.max(2, w >> 1);
     const bh = Math.max(2, h >> 1);
+    // The scene (seed) pass renders at half resolution: the flight mode
+    // raymarches a fractal per pixel, and the feedback blur + bloom re-soften
+    // everything anyway, so full-res seeds only cost heat. Feedback and the
+    // final composite stay full-res so trails and text stay crisp.
     this.fbo = {
-      scene: this._createTarget(w, h, true),
+      scene: this._createTarget(Math.max(2, w >> 1), Math.max(2, h >> 1), true),
       feedbackA: this._createTarget(w, h, true),
       feedbackB: this._createTarget(w, h, true),
       bloomA: this._createTarget(bw, bh, true),
@@ -183,6 +188,13 @@ class GLViz {
     gl.uniform3fv(this._loc(prog, 'uColA'), u.colA);
     gl.uniform3fv(this._loc(prog, 'uColB'), u.colB);
     gl.uniform3fv(this._loc(prog, 'uColC'), u.colC);
+    // Rollercoaster distance + visual DNA (unused uniforms resolve to null
+    // locations, which WebGL silently ignores).
+    gl.uniform1f(this._loc(prog, 'uDist'), u.dist || 0);
+    gl.uniform4fv(this._loc(prog, 'uGene0'), u.gene0 || [4, 0.9, 0.8, 0.6]);
+    gl.uniform4fv(this._loc(prog, 'uGene1'), u.gene1 || [0.5, 0.6, 1.6, 0.7]);
+    gl.uniform4fv(this._loc(prog, 'uGene2'), u.gene2 || [0.15, 0, 0.4, 2.6]);
+    gl.uniform4fv(this._loc(prog, 'uGene3'), u.gene3 || [1, 0.3, 0.5, 0]);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.waveTex);
     gl.uniform1i(this._loc(prog, 'uWave'), 0);
@@ -250,6 +262,8 @@ class GLViz {
     gl.bindTexture(gl.TEXTURE_2D, A.tex);
     gl.uniform1i(this._loc(comp, 'uBloom'), 1);
     gl.uniform1f(this._loc(comp, 'uIntensity'), u.bloom);
+    gl.uniform1f(this._loc(comp, 'uTime'), u.time);
+    gl.uniform1f(this._loc(comp, 'uShift'), u.shift || 0);
     this._draw();
   }
 }
