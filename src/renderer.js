@@ -178,8 +178,13 @@ function showMicNotice() {
     'Using your microphone. For Spotify audio directly, grant Newon Screen Recording and relaunch.';
   document.getElementById('permHint').classList.remove('hidden');
 }
+// The banner's action button opens whichever Settings pane the current
+// message is about (Screen Recording by default; Automation for Spotify).
+let permHintAction = 'screen';
 document.getElementById('permHint-btn').addEventListener('click', () => {
-  window.newon && window.newon.openScreenRecordingSettings();
+  if (!window.newon) return;
+  if (permHintAction === 'automation') window.newon.openAutomationSettings();
+  else window.newon.openScreenRecordingSettings();
 });
 document.getElementById('permHint-close').addEventListener('click', () => {
   document.getElementById('permHint').classList.add('hidden');
@@ -309,6 +314,26 @@ if (window.newon) {
   window.newon.onLyrics((data) => {
     setLyrics(data && data.synced ? parseLRC(data.synced) : null);
   });
+
+  // The Spotify now-playing read rides on the macOS Automation permission,
+  // which (like Screen Recording) is tied to the app's code signature — an
+  // update can silently revoke it. When that happens, SAY so instead of the
+  // overlay just vanishing.
+  let automationWarned = false;
+  window.newon.onSpotifyStatus((status) => {
+    if (status === 'denied' && !automationWarned) {
+      automationWarned = true;
+      permHintAction = 'automation';
+      document.getElementById('permHint-msg').textContent =
+        'Newon can’t read Spotify’s now-playing info — macOS revoked its ' +
+        'Automation permission (this happens after updates). Open Automation ' +
+        'settings, turn Spotify ON under Newon, then relaunch Newon.';
+      document.getElementById('permHint').classList.remove('hidden');
+    } else if (status === 'ok' && permHintAction === 'automation') {
+      permHintAction = 'screen';
+      document.getElementById('permHint').classList.add('hidden');
+    }
+  });
 }
 
 // ---- Lyrics (synced) ----
@@ -409,11 +434,11 @@ function makeGenes() {
 
 const genes = makeGenes();          // eased, live values fed to the shaders
 let geneTarget = makeGenes();
-let nextRoll = 0;
+let nextRoll = 0;                   // silence fallback — music re-rolls first
 function rerollGenes() {
   geneTarget = makeGenes();
   genes.folds = geneTarget.folds;   // symmetry snaps — reads as a new preset
-  nextRoll = perfT() + 9 + Math.random() * 11;
+  nextRoll = perfT() + 22 + Math.random() * 14;
 }
 function perfT() { return (performance.now() - start) / 1000; }
 
@@ -423,6 +448,8 @@ window.addEventListener('resize', () => viz && viz.resize());
 const start = performance.now();
 let camDist = 0;                    // distance travelled along the ride
 let lastFrameT = 0;
+let rotDir = 1;                     // trail-spin direction, flipped by hi-hats
+let prevTrebBeat = 0;
 function frame() {
   if (viz) {
     viz.resize();
@@ -433,19 +460,32 @@ function frame() {
     const dt = Math.min(Math.max(t - lastFrameT, 0), 0.05);
     lastFrameT = t;
 
-    // Mutate the DNA: scheduled re-rolls, plus a small chance that a hard
-    // beat slams the picture into a new form mid-song.
-    if (t > nextRoll) rerollGenes();
-    else if (audio.beat >= 1 && Math.random() < 0.03) rerollGenes();
+    if (audio.trebBeat >= 1 && prevTrebBeat < 1) rotDir = -rotDir;
+    prevTrebBeat = audio.trebBeat;
+
+    // Mutate the DNA the way projectM does hard preset cuts: when the MUSIC
+    // changes character (a drop, a chorus, the beat coming in), the visuals
+    // slam into a new form. The timer is only a fallback for silence.
+    if (audio.section) rerollGenes();
+    else if (t > nextRoll) rerollGenes();
+    // Strong onsets nudge the DNA mid-form — small twist/hue mutations so the
+    // picture keeps evolving with the percussion between section changes.
+    if (audio.onset >= 1 && Math.random() < 0.35) {
+      geneTarget.twist += (Math.random() - 0.5) * 0.5;
+      geneTarget.huePhase = (geneTarget.huePhase + (Math.random() - 0.3) * 0.12) % 1;
+      geneTarget.spin += (Math.random() - 0.5) * 0.6;
+    }
     const ease = 1 - Math.exp(-dt * 0.5);   // ~2s half-life morph
     for (const k in genes) {
       if (k !== 'folds') genes[k] += (geneTarget[k] - genes[k]) * ease;
     }
 
-    // The rollercoaster throttle: always rolling forward, but the music owns
-    // the pedal — level opens it up, bass slams it, beats kick it.
-    camDist += dt * (1.6 + genes.speed * (0.5 + audio.level * 1.7)
-                     + audio.bass * 5.0 + audio.beat * 3.5);
+    // The rollercoaster throttle: the SONG owns the pedal. Tempo sets the
+    // cruise (a 90 BPM ballad ambles, a 160 BPM banger flies), loudness opens
+    // it up, bass slams it, kicks punch it. Near-silence = slow drift.
+    const tempo = audio.bpm / 120;
+    camDist += dt * (0.8 + (1.0 + genes.speed * 0.7) * tempo * (0.3 + audio.level * 2.2)
+                     + audio.bass * 4.5 + audio.beat * 3.0);
 
     viz.render(state.mode, {
       time: t,
@@ -463,6 +503,9 @@ function frame() {
       gene1: [genes.twist, genes.warp, genes.radius, genes.detail],
       gene2: [genes.hueSpeed, genes.huePhase, genes.shapeSize, genes.spread],
       gene3: [genes.spin, genes.sway, genes.shake, 0],
+      // The rest of the song: attenuated bands + pitch/flux/onset/hat-beat.
+      aud0: [audio.subN, audio.lowMidN, audio.highMidN, audio.airN],
+      aud1: [audio.centroid, audio.flux, audio.onset, audio.trebBeat],
       // Chromatic-aberration kick in the composite — the lens smears on hits.
       shift: Math.min(audio.bass * 0.8 + audio.beat * 0.8, 1.5),
       // Feedback-warp parameters (per frame, ~60fps). This is the heart of the
@@ -475,10 +518,12 @@ function frame() {
       decay: state.mode === 'flight' ? 0.60 + state.trails * 0.24
            : state.mode === 'tunnel' ? 0.70 + state.trails * 0.22
            : 0.86 + state.trails * 0.11,
+      // Hi-hats flip the trail-spin direction (MilkDrop's rot-on-beat trick);
+      // the spin cadence itself follows the tempo.
       rot: state.mode === 'flight'
-           ? Math.sin(t * 0.11) * 0.004 + audio.beat * 0.010
-           : Math.sin(t * 0.06) * 0.02 + Math.sin(t * 0.017) * 0.02 + audio.beat * 0.03
-             + (state.mode === 'tunnel' ? 0.012 : 0.005),
+           ? (Math.sin(t * 0.11) * 0.004 + audio.beat * 0.010) * rotDir * tempo
+           : (Math.sin(t * 0.06) * 0.02 + Math.sin(t * 0.017) * 0.02 + audio.beat * 0.03
+             + (state.mode === 'tunnel' ? 0.012 : 0.005)) * rotDir,
       // Base < 1 (drifting outward) + a rush LFO that periodically crosses 1.0
       // to dive in; bass/beat pull you deeper still.
       zoom: state.mode === 'flight'
@@ -486,7 +531,8 @@ function frame() {
             : (state.mode === 'tunnel' ? 0.984 : 0.992)
               + Math.sin(t * 0.13) * 0.016 - 0.006
               - audio.bass * 0.030 - audio.beat * 0.022,
-      hueDrift: 0.035,
+      // Trail hues melt faster when the top end sizzles.
+      hueDrift: 0.02 + audio.treble * 0.06,
       colA: hex(p.a),
       colB: hex(p.b),
       colC: hex(p.c)
