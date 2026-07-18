@@ -397,13 +397,19 @@ function frame() {
       brightness: state.brightness,
       bloom: state.bloom,
       // Feedback-warp parameters (per frame, ~60fps). This is the heart of the
-      // Neon look: a strong bass-driven zoom + steady rotation spins the seed
-      // into endless receding spiral tunnels (Minter's signature feedback zoom).
-      // The tunnel mode zooms harder; neon keeps slightly longer trails.
-      decay: state.mode === 'tunnel' ? 0.70 + state.trails * 0.22 : 0.85 + state.trails * 0.12,
-      rot: Math.sin(t * 0.06) * 0.02 + audio.beat * 0.03 + (state.mode === 'tunnel' ? 0.010 : 0.004),
-      zoom: (state.mode === 'tunnel' ? 0.975 : 0.988) - audio.bass * 0.030 - audio.beat * 0.020,
-      hueDrift: 0.02,
+      // Neon look. A slow zoom LFO makes the picture surge inward (>1, diving
+      // INTO the tunnel) then pull back — the rollercoaster rush — with bass and
+      // beats punching it deeper. Rotation wanders and reverses so the trails
+      // corkscrew, and a strong hue drift rainbows them (60s video-feedback).
+      decay: state.mode === 'tunnel' ? 0.70 + state.trails * 0.22 : 0.86 + state.trails * 0.11,
+      rot: Math.sin(t * 0.06) * 0.02 + Math.sin(t * 0.017) * 0.02 + audio.beat * 0.03
+           + (state.mode === 'tunnel' ? 0.012 : 0.005),
+      // Base < 1 (drifting outward) + a rush LFO that periodically crosses 1.0
+      // to dive in; bass/beat pull you deeper still.
+      zoom: (state.mode === 'tunnel' ? 0.984 : 0.992)
+            + Math.sin(t * 0.13) * 0.016 - 0.006
+            - audio.bass * 0.030 - audio.beat * 0.022,
+      hueDrift: 0.035,
       colA: hex(p.a),
       colB: hex(p.b),
       colC: hex(p.c)

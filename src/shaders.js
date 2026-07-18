@@ -47,6 +47,11 @@ vec3 pal(float t){
   return t < 0.5 ? mix(uColA, uColB, smoothstep(0.0, 0.5, t))
                  : mix(uColB, uColC, smoothstep(0.5, 1.0, t));
 }
+// Full-spectrum rainbow (cosine palette) — the psychedelic colour-cycling that
+// Neon lives on. Blended with the user's palette for vivid, shifting hues.
+vec3 spectrum(float t){
+  return 0.5 + 0.5 * cos(6.28318 * (t + vec3(0.0, 0.33, 0.67)));
+}
 `;
 
 // ---- Mode 1: "Neon" — a swarm of particle light-forms -----------------------
@@ -69,53 +74,70 @@ void main(){
   vec2 uv = vUv * 2.0 - 1.0;
   uv.x *= uResolution.x / uResolution.y;
 
+  float t    = uTime;
   float bass = uBass   * uSensitivity;
   float treb = uTreble * uSensitivity;
   float lvl  = uLevel  * uSensitivity;
 
   // Slow global spin + bass-breathing zoom so the swarm surges with the music.
-  vec2 p = rot(uTime * 0.05 + sin(uTime * 0.021) * 0.6) * uv;
+  vec2 p = rot(t * 0.05 + sin(t * 0.021) * 0.6) * uv;
   p *= 0.92 - bass * 0.22 - uBeat * 0.10;
 
   // Kaleidoscope petal count steps every ~10s (3,4,5,6-fold), like Neon's
   // symmetry presets.
-  float folds = 3.0 + mod(floor(uTime / 10.0), 4.0);
+  float folds = 3.0 + mod(floor(t / 10.0), 4.0);
   vec3 fr = kfold(p, folds);
   vec2 q = fr.xy;
-  float rad = fr.z;
+
+  // Liquid domain warp — fbm shoves the whole field around so it writhes and
+  // melts like a lava lamp. Bass makes the warp heave. This is what turns the
+  // clean swarm into the "on-mushrooms" molten look.
+  vec2 warp = vec2(fbm(q * 2.3 + t * 0.20),
+                   fbm(q * 2.3 - t * 0.15 + 7.0));
+  q += (warp - 0.5) * (0.30 + bass * 0.7);
+  float rad = length(q);
 
   vec3 col = vec3(0.0);
 
-  // --- Particle swarm: points of light, color-cycled across the palette ---
+  // --- Plasma / moire underlay: soft rainbow interference behind everything ---
+  float plasma = sin(q.x * 6.0 + t)
+               + sin(q.y * 5.3 - t * 1.3)
+               + sin((q.x + q.y) * 4.7 + t * 0.7)
+               + fbm(q * 3.0 - t * 0.25) * 3.0;
+  col += spectrum(plasma * 0.09 + t * 0.05) * (0.10 + lvl * 0.35);
+
+  // --- Particle swarm: points of light, rainbow colour-cycled ---
   const int N = 46;
   for(int i = 0; i < N; i++){
     float fi = float(i);
     // A distinct window of the live waveform drives each particle's radius.
-    float w   = wavS(fi * 0.017 + uTime * 0.03);
-    float ang = fi * 2.399963 + uTime * (0.12 + 0.05 * sin(fi * 1.3)); // golden angle
-    float r   = 0.12 + fract(fi * 0.1367 + uTime * 0.04) * 0.95;
+    float w   = wavS(fi * 0.017 + t * 0.03);
+    float ang = fi * 2.399963 + t * (0.12 + 0.05 * sin(fi * 1.3)); // golden angle
+    float r   = 0.12 + fract(fi * 0.1367 + t * 0.04) * 0.95;
     r += w * (0.18 + bass * 0.5);
     vec2 pos  = vec2(cos(ang), sin(ang)) * r;
     float d   = length(q - pos);
     float sz  = 0.0045 + treb * 0.012 + uBeat * 0.004;   // treble sharpens the cores
     float glow = sz / (d * d + sz * 0.7);                // bright core + soft halo
-    col += pal(fi * 0.041 + uTime * 0.18 + r * 0.25)     // fast full-loop spectrum cycle
-           * glow * (0.35 + abs(w) * 0.7 + uBeat * 0.6);
+    // Blend the user's palette with the full rainbow for vivid, shifting hues.
+    vec3 c = mix(pal(fi * 0.041 + t * 0.18 + r * 0.25),
+                 spectrum(fi * 0.03 + t * 0.25 + r * 0.4), 0.55);
+    col += c * glow * (0.35 + abs(w) * 0.7 + uBeat * 0.6);
   }
   col /= float(N) * 0.06;
 
   // --- A couple of waveform rings woven through the swarm ---
   for(int j = 0; j < 2; j++){
     float fj = float(j);
-    float base   = 0.34 + fj * 0.22 + sin(uTime * (0.2 + fj * 0.13)) * 0.06;
-    float ripple = wavS(fract(atan(q.y, q.x) / 6.28318) + fj * 0.5 + uTime * 0.05);
+    float base   = 0.34 + fj * 0.22 + sin(t * (0.2 + fj * 0.13)) * 0.06;
+    float ripple = wavS(fract(atan(q.y, q.x) / 6.28318) + fj * 0.5 + t * 0.05);
     float dr     = rad - (base + ripple * (0.12 + bass * 0.35));
     float ring   = exp(-dr * dr * 900.0);
-    col += pal(rad * 0.4 + uTime * 0.15 + fj * 0.3) * ring * (0.6 + treb * 0.8);
+    col += spectrum(rad * 0.5 + t * 0.2 + fj * 0.3) * ring * (0.6 + treb * 0.8);
   }
 
-  // Beat flash — a quick spectral bloom of the whole field.
-  col += pal(uTime * 0.25) * uBeat * 0.25;
+  // Beat = a strobing multicolour bloom of the whole field.
+  col += spectrum(t * 0.4) * uBeat * 0.35;
 
   col *= 0.35 + lvl * 1.3 + uBeat * 0.5;
   col *= 0.5 + uBrightness;
@@ -134,8 +156,10 @@ void main(){
   float bass = uBass   * uSensitivity;
   float treb = uTreble * uSensitivity;
 
-  float ang = atan(uv.y, uv.x);
   float rad = length(uv);
+  // Swirl the tunnel — the angle twists with depth and time, so the whole
+  // thing corkscrews as the feedback zoom rushes you down it (the rollercoaster).
+  float ang = atan(uv.y, uv.x) + sin(rad * 3.5 - uTime * (0.8 + bass * 1.5)) * 0.5;
 
   // Spoke count steps 6..12 over time; beats twist the fold.
   float seg  = 6.0 + mod(floor(uTime / 8.0), 4.0) * 2.0;
@@ -153,8 +177,8 @@ void main(){
   float falloff = clamp(1.0 / (rad * 1.8 + 0.25), 0.0, 1.8);
   float pat = spoke * (0.4 + 0.6 * rings) * falloff;
 
-  vec3 col = pal(rad * 0.5 - uTime * 0.2) * pat;
-  col += pal(uTime * 0.2) * uBeat * 0.4 * spoke * falloff; // beat lights the structure
+  vec3 col = spectrum(rad * 0.6 - uTime * 0.25 + w * 0.3) * pat;
+  col += spectrum(uTime * 0.3) * uBeat * 0.4 * spoke * falloff; // beat lights it up
 
   col *= 0.4 + uLevel * 1.4 + bass * 0.8;
   col *= 0.55 + uBrightness;
