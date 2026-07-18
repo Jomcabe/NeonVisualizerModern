@@ -19,7 +19,7 @@ class GLViz {
     const S = window.NewonShaders;
     this.quad = this._quad();
     this.programs = {
-      ribbons: this._program(S.VERT, S.scenes.ribbons),
+      neon: this._program(S.VERT, S.scenes.neon),
       tunnel: this._program(S.VERT, S.scenes.tunnel),
       feedback: this._program(S.VERT, S.FRAG_FEEDBACK),
       bright: this._program(S.VERT, S.FRAG_BRIGHT),
@@ -163,7 +163,7 @@ class GLViz {
     const prev = this._feedbackFlip ? this.fbo.feedbackA : this.fbo.feedbackB;
     const cur = this._feedbackFlip ? this.fbo.feedbackB : this.fbo.feedbackA;
     this._feedbackFlip = !this._feedbackFlip;
-    const prog = this.programs[mode] || this.programs.ribbons;
+    const prog = this.programs[mode] || this.programs.neon;
 
     this._updateWave(u.wave);
 

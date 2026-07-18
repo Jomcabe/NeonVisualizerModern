@@ -99,6 +99,39 @@ body.idle { cursor: none; }
 .hint { margin-top: 22px; font-size: 12.5px; opacity: 0.5; line-height: 1.5; }
 .error { margin-top: 16px; color: #ff7a7a; font-size: 12.5px; }
 
+/* ---- Screen Recording permission card ---- */
+.logo.small { font-size: 26px; letter-spacing: 5px; }
+.perm-title { margin-top: 18px; font-size: 20px; font-weight: 700; }
+.perm-body {
+  margin-top: 12px; font-size: 13px; line-height: 1.6;
+  opacity: 0.72; text-align: left;
+}
+.perm-body b { color: #fff; opacity: 0.95; }
+#permOpenBtn {
+  margin-top: 22px; padding: 13px 26px;
+  font-size: 14.5px; font-weight: 700; letter-spacing: 0.3px;
+  color: #041014; cursor: pointer;
+  background: linear-gradient(90deg, #16f2c8, #4ce0ff);
+  border: none; border-radius: 40px;
+  box-shadow: 0 0 30px rgba(22, 242, 200, 0.45);
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+#permOpenBtn:hover { transform: translateY(-1px); box-shadow: 0 0 44px rgba(22, 242, 200, 0.7); }
+button.ghost {
+  display: block; margin: 14px auto 0; padding: 10px 22px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  color: var(--ui); background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 40px;
+}
+button.ghost:hover { background: rgba(255, 255, 255, 0.14); }
+button.linklike {
+  display: block; margin: 16px auto 0; padding: 4px;
+  font-size: 12px; cursor: pointer;
+  color: var(--ui); opacity: 0.5;
+  background: transparent; border: none; text-decoration: underline;
+}
+button.linklike:hover { opacity: 0.85; }
+
 /* ---- Screen Recording permission hint ---- */
 #permHint {
   position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);

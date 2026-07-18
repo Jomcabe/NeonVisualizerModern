@@ -19,7 +19,7 @@ const PALETTES = [
 ];
 
 const state = {
-  mode: 'ribbons',
+  mode: 'neon',
   palette: 0,
   sensitivity: 1.1,
   brightness: 0.35,
@@ -38,43 +38,89 @@ try {
 }
 audio = new AudioEngine();
 
-// ---- Start / audio capture ----
+// ---- Start / audio capture -------------------------------------------------
+// macOS only shows the Screen Recording prompt when the app *actually attempts*
+// a capture, and only reports "granted" AFTER approval + relaunch. The old flow
+// checked the status first and skipped the capture unless already granted — so
+// on a fresh install the prompt never fired and Start dropped straight to the
+// mic. Now we always attempt the system-audio capture first (which fires the
+// prompt and registers Newon in System Settings), and the mic is an explicit
+// opt-in — never a silent surprise.
 const startBtn = document.getElementById('startBtn');
 const gate = document.getElementById('gate');
+const gateStart = document.getElementById('gateStart');
+const gatePerm = document.getElementById('gatePerm');
 
-startBtn.addEventListener('click', async () => {
+startBtn.addEventListener('click', () => beginListening({ allowMic: false }));
+document.getElementById('permRetryBtn').addEventListener('click', () => beginListening({ allowMic: false }));
+document.getElementById('micFallbackBtn').addEventListener('click', () => beginListening({ allowMic: true }));
+document.getElementById('permOpenBtn').addEventListener('click', () => {
+  window.newon && window.newon.openScreenRecordingSettings();
+});
+
+async function beginListening({ allowMic }) {
   startBtn.disabled = true;
   startBtn.textContent = 'Connecting…';
+  hideGateError();
+
+  const access = window.newon ? await window.newon.checkScreenAccess() : 'granted';
+
+  // ALWAYS attempt the system-audio (loopback) capture — main.js supplies the
+  // screen source + audio:'loopback'. This is the call that triggers the macOS
+  // Screen Recording prompt on first run.
+  let sysStream = null;
   try {
-    // Ask macOS directly instead of guessing from a caught error — that way
-    // a denied/not-yet-granted Screen Recording permission is reported as
-    // what it is, rather than silently swapped for the microphone.
-    const access = window.newon ? await window.newon.checkScreenAccess() : 'granted';
-    let stream = null;
-    if (access === 'granted') {
-      try {
-        // System-audio loopback (main.js supplies the source + audio:'loopback').
-        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      } catch (err) {
-        // Granted but the capture itself failed (e.g. user cancelled the
-        // picker) — fall through to mic below.
-      }
-    }
-    if (!stream) {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    }
-    await audio.start(stream);
-    gate.classList.add('hidden');
-    pinGearBriefly();
-    if (access !== 'granted') {
-      showPermissionHint(access);
-    }
+    sysStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
   } catch (err) {
-    startBtn.disabled = false;
-    startBtn.textContent = 'Start Listening';
-    showGateError('Could not capture any audio. (' + err.message + ')');
+    sysStream = null;
   }
-});
+  const sysTrack = sysStream && sysStream.getAudioTracks()[0];
+  const gotSystemAudio = access === 'granted' && sysTrack && !sysTrack.muted;
+
+  if (gotSystemAudio) {
+    try {
+      await audio.start(sysStream);
+      return succeed();
+    } catch (err) {
+      stopStream(sysStream);
+    }
+  } else if (sysStream) {
+    // Loopback resolved but permission isn't truly granted yet (silent track).
+    // Don't feed silence and don't hijack the mic — release it.
+    stopStream(sysStream);
+  }
+
+  // No usable system audio. Only touch the microphone if the user asked for it.
+  if (allowMic) {
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      await audio.start(micStream);
+      succeed();
+      showMicNotice();
+      return;
+    } catch (err) {
+      showStartCard();
+      resetStartBtn();
+      showGateError('Could not access the microphone. (' + err.message + ')');
+      return;
+    }
+  }
+
+  // Show the Screen Recording gate (with an explicit mic opt-in) instead of
+  // silently redirecting to the microphone.
+  showPermGate();
+  resetStartBtn();
+}
+
+function succeed() {
+  gate.classList.add('hidden');
+  pinGearBriefly();
+}
+function stopStream(s) { s.getTracks().forEach((t) => t.stop()); }
+function resetStartBtn() { startBtn.disabled = false; startBtn.textContent = 'Start Listening'; }
+function showStartCard() { gatePerm.classList.add('hidden'); gateStart.classList.remove('hidden'); }
+function showPermGate() { gateStart.classList.add('hidden'); gatePerm.classList.remove('hidden'); }
+function hideGateError() { document.getElementById('gate-error').classList.add('hidden'); }
 
 function showGateError(msg) {
   const el = document.getElementById('gate-error');
@@ -82,15 +128,12 @@ function showGateError(msg) {
   el.classList.remove('hidden');
 }
 
-// Persistent banner (not just the one-time gate) — Spotify audio needs
-// Screen Recording, and macOS often re-revokes it after a rebuild/update,
-// so this can resurface long after the first launch.
-function showPermissionHint(access) {
+// The mic is now a deliberate opt-in; show a dismissible banner so it's never a
+// surprise, with a shortcut to fix Screen Recording for full system audio.
+function showMicNotice() {
   const el = document.getElementById('permHint');
-  const msg = access === 'denied'
-    ? 'Screen Recording permission is denied, so Newon is using your microphone instead of Spotify directly.'
-    : 'Newon needs Screen Recording permission to hear Spotify directly. Using the microphone for now.';
-  document.getElementById('permHint-msg').textContent = msg;
+  document.getElementById('permHint-msg').textContent =
+    'Using your microphone. For Spotify audio directly, grant Newon Screen Recording and relaunch.';
   el.classList.remove('hidden');
 }
 document.getElementById('permHint-btn').addEventListener('click', () => {
@@ -142,7 +185,7 @@ document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
 window.addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') panel.classList.toggle('hidden');
   else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
-  else if (e.key === ' ') { state.mode = state.mode === 'ribbons' ? 'tunnel' : 'ribbons'; syncModeButtons(); }
+  else if (e.key === ' ') { state.mode = state.mode === 'neon' ? 'tunnel' : 'neon'; syncModeButtons(); }
   else if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen();
 });
 function syncModeButtons() {
@@ -182,7 +225,7 @@ setInterval(() => {
   // Every other tick, switch visual mode too; the feedback trails carry over,
   // so the handoff reads as a morph rather than a hard cut.
   if (cycleTick % 2 === 0) {
-    state.mode = state.mode === 'ribbons' ? 'tunnel' : 'ribbons';
+    state.mode = state.mode === 'neon' ? 'tunnel' : 'neon';
     syncModeButtons();
   }
 }, 18000);
@@ -312,13 +355,14 @@ function frame() {
       sensitivity: state.sensitivity,
       brightness: state.brightness,
       bloom: state.bloom,
-      // Feedback-warp parameters (per frame, ~60fps): trails persistence,
-      // slow wandering rotation, and an outward zoom that surges on bass.
-      // The tunnel keeps shorter trails so its ring structure stays crisp.
-      decay: state.mode === 'tunnel' ? 0.62 + state.trails * 0.25 : 0.82 + state.trails * 0.16,
-      rot: Math.sin(t * 0.05) * 0.006 + audio.beat * 0.002,
-      zoom: 0.9945 - audio.bass * 0.006 - audio.beat * 0.004,
-      hueDrift: 0.012,
+      // Feedback-warp parameters (per frame, ~60fps). This is the heart of the
+      // Neon look: a strong bass-driven zoom + steady rotation spins the seed
+      // into endless receding spiral tunnels (Minter's signature feedback zoom).
+      // The tunnel mode zooms harder; neon keeps slightly longer trails.
+      decay: state.mode === 'tunnel' ? 0.70 + state.trails * 0.22 : 0.85 + state.trails * 0.12,
+      rot: Math.sin(t * 0.06) * 0.02 + audio.beat * 0.03 + (state.mode === 'tunnel' ? 0.010 : 0.004),
+      zoom: (state.mode === 'tunnel' ? 0.975 : 0.988) - audio.bass * 0.030 - audio.beat * 0.020,
+      hueDrift: 0.02,
       colA: hex(p.a),
       colB: hex(p.b),
       colC: hex(p.c)
