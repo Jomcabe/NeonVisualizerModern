@@ -1,19 +1,19 @@
 'use strict';
 
-// electron-builder afterPack hook: ad-hoc code-sign the packed .app.
-//
-// The build is intentionally unsigned (no Apple Developer certificate), but a
-// *completely* unsigned app is worse than an ad-hoc-signed one: macOS reports
-// quarantined unsigned apps as "damaged and can't be opened" (no bypass
-// offered), and unsigned arm64 binaries won't launch on Apple Silicon at all.
-// An ad-hoc signature ("codesign -s -") downgrades that to the standard
-// "unidentified developer" prompt, which right-click → Open bypasses.
+// Ad-hoc sign the finished app. This personal build is not notarized.
 const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
 module.exports = async function adHocSign(context) {
   if (context.electronPlatformName !== 'darwin') return;
+  // electron-builder 25 calls afterPack for both intermediate architectures,
+  // then again after merging. Signing an intermediate app creates different
+  // CodeResources manifests, which prevents @electron/universal from merging.
+  if (/-universal-(?:x64|arm64)-temp$/.test(context.appOutDir)) {
+    console.log('Deferring ad-hoc signing until the universal app is merged.');
+    return;
+  }
   const appPath = path.join(
     context.appOutDir,
     `${context.packager.appInfo.productFilename}.app`
