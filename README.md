@@ -7,6 +7,8 @@ Zorzin's **Neon** on the Xbox 360.
 
 Universal DMG for Apple Silicon and Intel. System audio capture requires macOS 13+.
 
+![Solar blossom rendered by Newon on macOS](docs/newon-preview.jpg)
+
 ## The 0.4 rebuild
 
 The renderer now centers on textured, moving 3D forms and recursive video feedback.

@@ -44,10 +44,17 @@ jobs:
         run: npm run build:icon
 
       - name: Build universal .dmg
-        run: npx electron-builder --mac dmg --publish never
+        run: npx electron-builder --mac dmg --universal --publish never
         env:
           # Personal / unsigned build — skip code signing.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify universal app
+        run: |
+          newon_app="dist/mac-universal/Newon.app"
+          lipo -verify_arch arm64 x86_64 "$newon_app/Contents/MacOS/Newon"
+          lipo -verify_arch arm64 x86_64 "$newon_app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
+          codesign --verify --deep --strict "$newon_app"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -62,7 +69,7 @@ jobs:
 
       # Publish a Release (what the README "Download" button points at) when a
       # v* tag is pushed, when this workflow is run manually from the Actions
-      # tab, or on pushes to main / the active release branch — the release is
+      # tab, or on pushes to main — the release is
       # tagged from package.json's version, so bumping the version and pushing
       # is all it takes to ship a new downloadable build.
       - name: Publish release
