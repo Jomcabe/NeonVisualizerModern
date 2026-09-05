@@ -52,8 +52,8 @@ jobs:
       - name: Verify universal app
         run: |
           newon_app="dist/mac-universal/Newon.app"
-          lipo -verify_arch arm64 x86_64 "$newon_app/Contents/MacOS/Newon"
-          lipo -verify_arch arm64 x86_64 "$newon_app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
+          lipo "$newon_app/Contents/MacOS/Newon" -verify_arch arm64 x86_64
+          lipo "$newon_app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework" -verify_arch arm64 x86_64
           codesign --verify --deep --strict "$newon_app"
 
       - name: Upload build artifact
