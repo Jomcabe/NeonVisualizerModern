@@ -1,107 +1,225 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline';" />
-  <title>Newon</title>
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <canvas id="gl"></canvas>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; media-src 'self' blob:;"
+    />
+    <title>Newon · Light synthesizer</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <canvas id="gl" aria-label="Music-reactive light visualization"></canvas>
+    <div id="fatal" role="alert" class="hidden"></div>
+    <header id="topbar" class="chrome">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">◌</span> NEWON
+        <span class="edition">LIGHT SYNTHESIZER</span>
+      </div>
+      <div class="top-actions">
+        <span id="sourceStatus" class="source-status">Ambient</span>
+        <button
+          id="fsBtn"
+          class="icon"
+          aria-label="Toggle fullscreen"
+          title="Fullscreen (F)"
+        >
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg>
+        </button>
+        <button
+          id="gear"
+          class="icon"
+          aria-label="Open controls"
+          aria-expanded="false"
+          aria-controls="panel"
+          title="Controls (C)"
+        >
+          ☷
+        </button>
+      </div>
+    </header>
 
-  <!-- Subtle now-playing, tucked in the corner -->
-  <div id="nowplaying" class="hidden">
-    <img id="np-art" alt="" />
-    <div id="np-text">
-      <div id="np-title"></div>
-      <div id="np-artist"></div>
-    </div>
-  </div>
-
-  <!-- Synced lyric line, sprinkled at the bottom -->
-  <div id="lyric" class="hidden"></div>
-
-  <!-- Surfaces when Screen Recording isn't granted, so mic fallback is never silent -->
-  <div id="permHint" class="hidden">
-    <span id="permHint-msg"></span>
-    <button id="permHint-btn">Open Settings</button>
-    <button id="permHint-close" title="Dismiss">✕</button>
-  </div>
-
-  <!-- Start gate: system-audio capture needs a user gesture -->
-  <div id="gate">
-    <div class="gate-card" id="gateStart">
-      <div class="logo">NEWON</div>
-      <p class="tagline">Your music, painted in light.</p>
-      <button id="startBtn">Start Listening</button>
-      <p class="hint">
-        Newon will ask macOS for permission to capture your Mac's audio, then
-        react to whatever you're playing. Play something in Spotify and hit start.
+    <section id="welcome" aria-labelledby="welcomeTitle">
+      <p class="eyebrow">A LOVE LETTER TO NEON / 2005</p>
+      <h1 id="welcomeTitle">Let the music<br />take shape.</h1>
+      <p class="intro">
+        A living light show, inspired by the Xbox 360.<br />Put something on.
+        Get lost in it.
       </p>
-      <p id="gate-error" class="error hidden"></p>
-    </div>
-
-    <!-- Shown when Screen Recording isn't granted yet — instead of silently
-         switching to the mic, we explain the (required) macOS flow. -->
-    <div class="gate-card hidden" id="gatePerm">
-      <div class="logo small">NEWON</div>
-      <h2 class="perm-title">Let Newon hear your Mac</h2>
-      <p class="perm-body">
-        macOS routes system-audio capture through <b>Screen&nbsp;Recording</b>
-        permission. In that list:
+      <div class="welcome-actions">
+        <button id="startBtn" class="primary">
+          Listen to system audio <span aria-hidden="true">↗</span>
+        </button>
+        <button id="demoBtn" class="secondary">Explore the visuals</button>
+      </div>
+      <button id="welcomeFile" class="text-button">
+        Or open an audio file
+      </button>
+      <p id="welcomeHint" class="small">
+        System audio needs macOS permission. Your audio stays on your device.
       </p>
-      <ol class="perm-steps">
-        <li>Turn <b>Newon</b> on (first time only).</li>
-        <li><b>Already shows enabled but still silent?</b> The grant went stale
-          after an update. Select Newon and click the <b>“–”</b> button to
-          <b>remove</b> it — toggling off/on will <i>not</i> fix it.</li>
-        <li><b>Fully quit and relaunch</b> Newon, then add it back when asked.</li>
-      </ol>
-      <p class="perm-body">Newon only reads the audio — it never records or transmits your screen.</p>
-      <button id="permOpenBtn">Open Screen Recording Settings</button>
-      <button id="permRetryBtn" class="ghost">I've done that — try again</button>
-      <button id="micFallbackBtn" class="linklike">Use my microphone instead</button>
-    </div>
-  </div>
+    </section>
 
-  <!-- Controls (toggle with the gear or the "C" key) -->
-  <button id="gear" title="Settings (C)">⚙</button>
-  <div id="panel" class="hidden">
-    <div class="panel-row">
-      <span class="panel-label">Mode</span>
-      <div class="seg" id="modeSeg">
-        <button data-mode="flight" class="active">Flight</button>
-        <button data-mode="neon">Neon</button>
-        <button data-mode="tunnel">Tunnel</button>
+    <aside id="panel" class="hidden" aria-label="Visualizer controls">
+      <div class="panel-heading">
+        <h2>Make it yours</h2>
+        <button id="closePanel" class="icon" aria-label="Close controls">
+          ×
+        </button>
+      </div>
+      <div class="control-group">
+        <p class="eyebrow">AUDIO SOURCE</p>
+        <div class="source-buttons">
+          <button id="systemBtn">System</button
+          ><button id="fileBtn">File</button><button id="micBtn">Mic</button
+          ><button id="ambientBtn">Demo</button>
+        </div>
+        <div class="source-detail">
+          <span id="audioLabel">Ambient motion · no audio input</span
+          ><button id="stopBtn" class="text-button hidden">Stop</button>
+        </div>
+        <div class="meters" aria-label="Audio levels">
+          <span id="meterBass"></span><span id="meterMid"></span
+          ><span id="meterTreble"></span>
+        </div>
+        <div class="meter-labels">
+          <span>BASS</span><span>MIDS</span><span>HIGHS</span>
+        </div>
+      </div>
+      <div class="control-group">
+        <div class="row">
+          <label for="presetSel">Scene</label
+          ><span id="sceneCount" class="small"></span>
+        </div>
+        <select id="presetSel"></select>
+        <div class="row">
+          <label for="paletteSel">Color</label
+          ><select id="paletteSel"></select>
+        </div>
+        <label class="slider-row" for="sensitivity"
+          >Sensitivity <output id="sensitivityValue"></output
+          ><input id="sensitivity" type="range" min="0.3" max="2.5" step="0.05"
+        /></label>
+        <label class="slider-row" for="brightness"
+          >Brightness <output id="brightnessValue"></output
+          ><input id="brightness" type="range" min="0.3" max="2" step="0.05"
+        /></label>
+        <label class="slider-row" for="bloom"
+          >Glow <output id="bloomValue"></output
+          ><input id="bloom" type="range" min="0" max="2" step="0.05"
+        /></label>
+        <label class="slider-row" for="trails"
+          >Persistence <output id="trailsValue"></output
+          ><input id="trails" type="range" min="0" max="1" step="0.05"
+        /></label>
+        <label class="slider-row" for="speed"
+          >Motion <output id="speedValue"></output
+          ><input id="speed" type="range" min="0.25" max="2" step="0.05"
+        /></label>
+      </div>
+      <div class="control-group">
+        <label class="toggle"
+          ><input id="autoCycle" type="checkbox" /> Autopilot
+          <span class="small">Changes scenes gently</span></label
+        >
+        <label class="toggle"
+          ><input id="showLyrics" type="checkbox" /> Spotify lyrics</label
+        >
+        <div class="row">
+          <label for="quality">Quality</label
+          ><select id="quality">
+            <option value="auto">Adaptive</option>
+            <option value="high">High</option>
+            <option value="low">Low power</option>
+          </select>
+        </div>
+        <div class="row small">
+          <span>Spotify</span
+          ><span id="spotifyState">Available in the Mac app</span
+          ><button id="spotifyFixBtn" class="text-button hidden">
+            Settings
+          </button>
+        </div>
+        <div class="row small">
+          <span id="fpsLabel">Starting renderer</span
+          ><button id="resetBtn" class="text-button">Reset controls</button>
+        </div>
+      </div>
+      <p class="key-help">
+        <kbd>←</kbd> <kbd>→</kbd> scene · <kbd>R</kbd> variation ·
+        <kbd>C</kbd> controls<br />Drag the picture to move the camera. Gamepads
+        work too.
+      </p>
+    </aside>
+
+    <footer id="transport" class="chrome">
+      <div class="scene-info">
+        <span id="sceneNumber">01 / 08</span>
+        <div>
+          <p id="sceneName">Prismatic orbit</p>
+          <span id="sceneFamily">Interwoven light</span>
+        </div>
+      </div>
+      <div class="scene-controls">
+        <button
+          id="prevBtn"
+          class="icon"
+          aria-label="Previous scene"
+          title="Previous scene (←)"
+        >
+          ‹
+        </button>
+        <button
+          id="pauseBtn"
+          class="icon"
+          aria-label="Pause motion"
+          title="Pause motion (Space)"
+        >
+          Ⅱ
+        </button>
+        <button
+          id="nextBtn"
+          class="icon"
+          aria-label="Next scene"
+          title="Next scene (→)"
+        >
+          ›
+        </button>
+        <span class="divider"></span>
+        <button id="autoBtn" class="auto-button" aria-pressed="true">
+          AUTOPILOT <span id="autoIndicator"></span>
+        </button>
+      </div>
+    </footer>
+    <div id="nowplaying" class="hidden">
+      <img id="np-art" alt="" />
+      <div>
+        <p id="np-title"></p>
+        <span id="np-artist"></span>
       </div>
     </div>
-    <div class="panel-row">
-      <span class="panel-label">Palette</span>
-      <select id="paletteSel"></select>
+    <div id="lyric" class="hidden"></div>
+    <div id="notice" class="hidden" role="status">
+      <p id="noticeText"></p>
+      <button id="noticeSettings" class="text-button hidden">
+        Open Settings</button
+      ><button id="noticeClose" class="icon" aria-label="Dismiss message">
+        ×
+      </button>
     </div>
-    <div class="panel-row">
-      <span class="panel-label">Spotify</span>
-      <span id="spotifyState" class="sp-state">checking…</span>
-      <button id="spotifyFixBtn" class="sp-fix hidden">Fix</button>
-    </div>
-    <label class="slider-row">Sensitivity <input id="sensitivity" type="range" min="0.3" max="2.5" step="0.05" value="1.1" /></label>
-    <label class="slider-row">Brightness <input id="brightness" type="range" min="0" max="1.2" step="0.02" value="0.35" /></label>
-    <label class="slider-row">Glow <input id="bloom" type="range" min="0" max="2.5" step="0.05" value="1.1" /></label>
-    <label class="slider-row">Trails <input id="trails" type="range" min="0" max="1" step="0.02" value="0.7" /></label>
-    <div class="panel-row toggles">
-      <label><input id="autoCycle" type="checkbox" checked /> Auto-cycle looks</label>
-      <label><input id="showLyrics" type="checkbox" checked /> Lyrics</label>
-    </div>
-    <div class="panel-row">
-      <button id="fsBtn" class="wide">Toggle Fullscreen (F)</button>
-    </div>
-  </div>
-
-  <script src="shaders.js"></script>
-  <script src="gl.js"></script>
-  <script src="audio.js"></script>
-  <script src="renderer.js"></script>
-</body>
+    <input
+      id="audioFile"
+      class="hidden"
+      type="file"
+      accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac"
+    />
+    <script src="presets.js"></script>
+    <script src="shaders.js"></script>
+    <script src="gl.js"></script>
+    <script src="audio.js"></script>
+    <script src="renderer.js"></script>
+  </body>
 </html>

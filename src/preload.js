@@ -1,14 +1,16 @@
-'use strict';
+"use strict";
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer } = require("electron");
 
 // Minimal, safe bridge: the renderer never touches Node directly.
-contextBridge.exposeInMainWorld('newon', {
-  onNowPlaying: (cb) => ipcRenderer.on('nowplaying', (_e, data) => cb(data)),
-  onLyrics: (cb) => ipcRenderer.on('lyrics', (_e, data) => cb(data)),
-  onSpotifyStatus: (cb) => ipcRenderer.on('spotify-status', (_e, data) => cb(data)),
-  checkScreenAccess: () => ipcRenderer.invoke('check-screen-access'),
-  openScreenRecordingSettings: () => ipcRenderer.invoke('open-screen-recording-settings'),
-  openAutomationSettings: () => ipcRenderer.invoke('open-automation-settings'),
-  platform: process.platform
+contextBridge.exposeInMainWorld("newon", {
+  onNowPlaying: (cb) => ipcRenderer.on("nowplaying", (_e, data) => cb(data)),
+  onLyrics: (cb) => ipcRenderer.on("lyrics", (_e, data) => cb(data)),
+  onSpotifyStatus: (cb) =>
+    ipcRenderer.on("spotify-status", (_e, data) => cb(data)),
+  checkScreenAccess: () => ipcRenderer.invoke("check-screen-access"),
+  openScreenRecordingSettings: () =>
+    ipcRenderer.invoke("open-screen-recording-settings"),
+  openAutomationSettings: () => ipcRenderer.invoke("open-automation-settings"),
+  platform: process.platform,
 });

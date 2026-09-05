@@ -1,249 +1,268 @@
-'use strict';
-
-// Wraps a MediaStream in a Web Audio AnalyserNode and turns it into a rich,
-// per-frame description of the music — the projectM/MilkDrop school of audio
-// analysis, where every aspect of the sound gets its own signal:
-//
-//   level                loudness (RMS), smoothed          -> global brightness
-//   sub/bass/lowMid/
-//   mid/highMid/
-//   treble/air           7 frequency bands, 0..1           -> each drives its own visual
-//   subN/bassN/...       MilkDrop-style "attenuated" bands (band / its own
-//                        running average) so quiet songs still animate fully
-//   beat                 kick-drum pulse envelope           -> speed lurch / dive
-//   trebBeat             hi-hat/snare pulse envelope        -> roll flicks / sparkle
-//   onset                broadband spectral-flux onsets     -> twist kicks / mutations
-//   flux                 smoothed spectral flux             -> writhe amount
-//   centroid             spectral centroid 0..1 (pitch /    -> hue steering
-//                        brightness of the sound)
-//   bpm                  tempo estimate from onset spacing  -> ride speed / cadence
-//   section              true for ONE frame when the song   -> visual-DNA re-roll
-//                        changes character (drop, chorus…)     (projectM hard cut)
-
-class AudioEngine {
-  constructor() {
-    this.ctx = null;
-    this.analyser = null;
-    this.freq = null;
-    this.stream = null;
-    this.source = null;
-
-    this.level = 0;
-    this.sub = 0; this.bass = 0; this.lowMid = 0; this.mid = 0;
-    this.highMid = 0; this.treble = 0; this.air = 0;
-    this.subN = 0; this.bassN = 0; this.lowMidN = 0; this.midN = 0;
-    this.highMidN = 0; this.trebleN = 0; this.airN = 0;
-    this.beat = 0;
-    this.trebBeat = 0;
-    this.onset = 0;
-    this.flux = 0;
-    this.centroid = 0.35;
-    this.bpm = 120;
-    this.section = false;
-    // Time-domain waveform (128 = silence) — drawn directly by the shaders.
-    this.wave = new Uint8Array(2048).fill(128);
-
-    this._avgs = new Float64Array(7);     // slow per-band running averages
-    this._prevMag = null;                 // last frame's spectrum (for flux)
-    this._fluxAvg = 0;
-    this._trebAvg = 0;
-    this._bassAvg = 0;
-    this._beatCooldown = 0;
-    this._trebCooldown = 0;
-    this._onsetCooldown = 0;
-    this._onsetTimes = [];                // recent onset timestamps for BPM
-    this._profileFast = new Float64Array(3);
-    this._profileSlow = new Float64Array(3);
-    this._lastSection = 0;
-  }
-
-  get running() {
-    return !!this.analyser;
-  }
-
-  // Attach a stream (system loopback, or mic fallback). Video tracks dropped.
-  async start(stream) {
-    this.stop();
-    this.stream = stream;
-    stream.getVideoTracks().forEach((t) => {
-      t.stop();
-      stream.removeTrack(t);
-    });
-    if (!stream.getAudioTracks().length) {
-      throw new Error('No audio track in the captured stream.');
+"use strict";
+(() => {
+  const BANDS = [
+    ["sub", 20, 60],
+    ["bass", 60, 250],
+    ["lowMid", 250, 500],
+    ["mid", 500, 2000],
+    ["highMid", 2000, 4000],
+    ["treble", 4000, 9000],
+    ["air", 9000, 16000],
+  ];
+  const approach = (a, b, dt, attack, release) =>
+    a + (b - a) * (1 - Math.exp(-dt / (b > a ? attack : release)));
+  class AudioAnalysis {
+    constructor() {
+      this.reset();
     }
-
-    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (this.ctx.state === 'suspended') await this.ctx.resume();
-    this.source = this.ctx.createMediaStreamSource(stream);
-    this.analyser = this.ctx.createAnalyser();
-    // 4096-point FFT: ~10.8 Hz/bin at 44.1kHz, enough to separate the sub-bass
-    // from the kick. Light smoothing — our own attack/release envelopes below
-    // do the real shaping, and heavy analyser smoothing would blur onsets.
-    this.analyser.fftSize = 4096;
-    this.analyser.smoothingTimeConstant = 0.55;
-    this.source.connect(this.analyser);
-    this.freq = new Uint8Array(this.analyser.frequencyBinCount);
-    this.wave = new Uint8Array(this.analyser.fftSize).fill(128);
-  }
-
-  stop() {
-    if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
-    if (this.ctx) this.ctx.close().catch(() => {});
-    this.ctx = null;
-    this.analyser = null;
-    this.stream = null;
-    this.source = null;
-  }
-
-  // Average a Hz range of the spectrum, normalized 0..1.
-  _bandHz(lo, hi) {
-    const nyq = this.ctx.sampleRate / 2;
-    const n = this.freq.length;
-    const a = Math.max(1, Math.floor((lo / nyq) * n));
-    const b = Math.min(n, Math.ceil((hi / nyq) * n));
-    let sum = 0;
-    for (let i = a; i < b; i++) sum += this.freq[i];
-    return sum / ((b - a) * 255);
-  }
-
-  // Call once per animation frame.
-  update() {
-    if (!this.analyser) { this.section = false; return this; }
-    this.analyser.getByteFrequencyData(this.freq);
-    this.analyser.getByteTimeDomainData(this.wave);
-    const now = performance.now();
-
-    // ---- Loudness (RMS of the waveform) ----
-    let rms = 0;
-    for (let i = 0; i < this.wave.length; i += 4) {
-      const v = (this.wave[i] - 128) / 128;
-      rms += v * v;
-    }
-    rms = Math.sqrt(rms / (this.wave.length / 4)) * 1.8;
-
-    // ---- 7 bands ----
-    const raw = [
-      this._bandHz(20, 60),      // sub
-      this._bandHz(60, 250),     // bass
-      this._bandHz(250, 500),    // lowMid
-      this._bandHz(500, 2000),   // mid
-      this._bandHz(2000, 4000),  // highMid
-      this._bandHz(4000, 9000),  // treble
-      this._bandHz(9000, 16000)  // air
-    ];
-
-    // Smooth (attack fast, release slow-ish) for pleasant motion.
-    const smooth = (prev, next, up, down) =>
-      next > prev ? prev + (next - prev) * up : prev + (next - prev) * down;
-    const KEYS = ['sub', 'bass', 'lowMid', 'mid', 'highMid', 'treble', 'air'];
-    for (let i = 0; i < 7; i++) {
-      this[KEYS[i]] = smooth(this[KEYS[i]], raw[i], 0.55, 0.15);
-      // MilkDrop-style attenuation: each band relative to its own ~4s average,
-      // so a quiet acoustic track drives the visuals as hard as a club mix.
-      this._avgs[i] = this._avgs[i] * 0.995 + raw[i] * 0.005;
-      const rel = raw[i] / (this._avgs[i] * 2 + 0.008);
-      this[KEYS[i] + 'N'] = smooth(this[KEYS[i] + 'N'], Math.min(rel, 1.6) * 0.625, 0.5, 0.12);
-    }
-    this.level = smooth(this.level, rms, 0.5, 0.1);
-
-    // ---- Spectral centroid: where the energy sits = perceived pitch ----
-    const nyq = this.ctx.sampleRate / 2;
-    let wsum = 0, msum = 0;
-    for (let i = 1; i < this.freq.length; i++) {
-      wsum += i * this.freq[i];
-      msum += this.freq[i];
-    }
-    if (msum > 40) {
-      const hz = (wsum / msum / this.freq.length) * nyq;
-      // Log-map 110 Hz .. 7040 Hz (six octaves) onto 0..1.
-      const c = Math.min(Math.max(Math.log2(Math.max(hz, 111) / 110) / 6, 0), 1);
-      this.centroid = smooth(this.centroid, c, 0.15, 0.08);
-    }
-
-    // ---- Spectral flux -> onsets (any percussive/harmonic change at all) ----
-    let flux = 0;
-    if (this._prevMag) {
-      for (let i = 1; i < this.freq.length; i += 2) {
-        const d = this.freq[i] - this._prevMag[i];
-        if (d > 0) flux += d;
+    reset() {
+      for (const [name] of BANDS) {
+        this[name] = 0;
+        this[name + "N"] = 0;
       }
-      flux /= (this.freq.length / 2) * 255;
-    } else {
-      this._prevMag = new Uint8Array(this.freq.length);
+      this.level = 0;
+      this.beat = 0;
+      this.trebBeat = 0;
+      this.onset = 0;
+      this.flux = 0;
+      this.centroid = 0.35;
+      this.bpm = 120;
+      this.section = false;
+      this.wave = new Uint8Array(2048).fill(128);
+      this.freq = new Uint8Array(1024);
+      this.averages = new Float64Array(7);
+      this.previous = null;
+      this.bassAverage = 0;
+      this.fluxAverage = 0;
+      this.trebleAverage = 0;
+      this.time = 0;
+      this.lastBeat = -1;
+      this.lastTreble = -1;
+      this.lastOnset = -1;
+      this.onsetTimes = [];
+      this.profile = 0;
+      this.lastSection = 0;
     }
-    this._prevMag.set(this.freq);
-    this._fluxAvg = this._fluxAvg * 0.97 + flux * 0.03;
-    this.flux = smooth(this.flux, Math.min(flux / (this._fluxAvg * 2 + 0.004), 1.5), 0.5, 0.2);
-    this._onsetCooldown++;
-    if (flux > this._fluxAvg * 1.7 && flux > 0.004 && this._onsetCooldown > 7) {
-      this.onset = 1;
-      this._onsetCooldown = 0;
-      this._onsetTimes.push(now);
-      if (this._onsetTimes.length > 16) this._onsetTimes.shift();
-      this._updateBpm();
-    } else {
-      this.onset *= 0.85;
+    analyze(wave, freq, sampleRate, delta) {
+      const dt = Math.min(0.1, Math.max(0.001, delta));
+      this.time += dt;
+      this.wave = wave;
+      this.freq = freq;
+      this.section = false;
+      let rms = 0;
+      for (let i = 0; i < wave.length; i++) rms += ((wave[i] - 128) / 128) ** 2;
+      rms = Math.sqrt(rms / Math.max(1, wave.length));
+      const audible = rms > 0.0015;
+      this.level = approach(this.level, Math.min(1, rms * 3), dt, 0.045, 0.28);
+      const raw = BANDS.map(([, lo, hi]) => {
+        const a = Math.max(
+          1,
+          Math.floor((lo / (sampleRate / 2)) * freq.length),
+        );
+        const b = Math.min(
+          freq.length,
+          Math.ceil((hi / (sampleRate / 2)) * freq.length),
+        );
+        if (b <= a || !audible) return 0;
+        let sum = 0;
+        for (let i = a; i < b; i++) sum += freq[i] / 255;
+        return sum / (b - a);
+      });
+      for (let i = 0; i < BANDS.length; i++) {
+        const name = BANDS[i][0];
+        this[name] = approach(this[name], raw[i], dt, 0.045, 0.22);
+        this.averages[i] = approach(this.averages[i], raw[i], dt, 3.0, 5.0);
+        const relative = audible
+          ? Math.min(1, raw[i] / Math.max(0.08, this.averages[i] * 1.9))
+          : 0;
+        this[name + "N"] = approach(
+          this[name + "N"],
+          relative,
+          dt,
+          0.055,
+          0.25,
+        );
+      }
+      let flux = 0,
+        weight = 0,
+        total = 0;
+      if (!this.previous || this.previous.length !== freq.length)
+        this.previous = new Uint8Array(freq.length);
+      for (let i = 1; i < freq.length; i++) {
+        const magnitude = freq[i] / 255;
+        flux += Math.max(0, (freq[i] - this.previous[i]) / 255);
+        weight += i * magnitude;
+        total += magnitude;
+      }
+      this.previous.set(freq);
+      flux = audible ? flux / freq.length : 0;
+      this.flux = approach(this.flux, Math.min(1, flux * 20), dt, 0.06, 0.22);
+      this.beat *= Math.exp(-dt / 0.22);
+      this.trebBeat *= Math.exp(-dt / 0.12);
+      this.onset *= Math.exp(-dt / 0.16);
+      if (
+        audible &&
+        raw[1] > Math.max(0.14, this.bassAverage * 1.35) &&
+        this.time - this.lastBeat > 0.24
+      ) {
+        this.beat = 1;
+        this.lastBeat = this.time;
+      }
+      if (
+        audible &&
+        raw[5] > Math.max(0.1, this.trebleAverage * 1.4) &&
+        this.time - this.lastTreble > 0.13
+      ) {
+        this.trebBeat = 1;
+        this.lastTreble = this.time;
+      }
+      if (
+        audible &&
+        flux > Math.max(0.006, this.fluxAverage * 1.6) &&
+        this.time - this.lastOnset > 0.16
+      ) {
+        this.onset = 1;
+        this.lastOnset = this.time;
+        this.onsetTimes.push(this.time);
+        if (this.onsetTimes.length > 16) this.onsetTimes.shift();
+        this.updateTempo();
+      }
+      this.bassAverage = approach(this.bassAverage, raw[1], dt, 0.55, 0.8);
+      this.trebleAverage = approach(this.trebleAverage, raw[5], dt, 0.55, 0.8);
+      this.fluxAverage = approach(this.fluxAverage, flux, dt, 0.5, 1.0);
+      if (total > 0 && audible) {
+        const hz = ((weight / total / freq.length) * sampleRate) / 2;
+        // Spectral centroid describes brightness, not fundamental pitch.
+        const centroid = Math.max(
+          0,
+          Math.min(1, Math.log2(Math.max(110, hz) / 110) / 6),
+        );
+        this.centroid = approach(this.centroid, centroid, dt, 0.6, 1.0);
+      }
+      const energy = raw[1] + raw[3] + raw[5];
+      if (
+        audible &&
+        Math.abs(energy - this.profile) > 0.55 &&
+        this.time - this.lastSection > 12
+      ) {
+        this.section = true;
+        this.lastSection = this.time;
+      }
+      this.profile = approach(this.profile, energy, dt, 4, 4);
+      return this;
     }
-
-    // ---- Kick beat (bass energy spike) ----
-    this._bassAvg = this._bassAvg * 0.92 + raw[1] * 0.08;
-    this._beatCooldown++;
-    if (raw[1] > this._bassAvg * 1.4 && raw[1] > 0.12 && this._beatCooldown > 8) {
-      this.beat = 1;
-      this._beatCooldown = 0;
-    } else {
-      this.beat *= 0.9;
+    updateTempo() {
+      if (this.onsetTimes.length < 6) return;
+      const intervals = [];
+      for (let i = 1; i < this.onsetTimes.length; i++) {
+        let gap = this.onsetTimes[i] - this.onsetTimes[i - 1];
+        if (gap < 0.16 || gap > 2) continue;
+        while (gap < 0.33) gap *= 2;
+        while (gap > 0.85) gap /= 2;
+        intervals.push(gap);
+      }
+      if (intervals.length < 4) return;
+      intervals.sort((a, b) => a - b);
+      this.bpm += (60 / intervals[intervals.length >> 1] - this.bpm) * 0.15;
     }
-
-    // ---- Treble beat (hats / snare sizzle) ----
-    this._trebAvg = this._trebAvg * 0.93 + raw[5] * 0.07;
-    this._trebCooldown++;
-    if (raw[5] > this._trebAvg * 1.5 && raw[5] > 0.05 && this._trebCooldown > 6) {
-      this.trebBeat = 1;
-      this._trebCooldown = 0;
-    } else {
-      this.trebBeat *= 0.85;
-    }
-
-    // ---- Section change: the song's character shifts (drop, chorus, verse).
-    // Compare a fast energy profile against a slow one; a big divergence after
-    // a quiet spell of agreement = the music changed shape. One-frame pulse.
-    this.section = false;
-    const prof = [raw[1], raw[3], raw[5]];
-    let dist = 0;
-    for (let i = 0; i < 3; i++) {
-      this._profileFast[i] = this._profileFast[i] * 0.85 + prof[i] * 0.15;
-      this._profileSlow[i] = this._profileSlow[i] * 0.992 + prof[i] * 0.008;
-      dist += Math.abs(this._profileFast[i] - this._profileSlow[i]);
-    }
-    if (dist > 0.17 && rms > 0.05 && now - this._lastSection > 7000) {
-      this.section = true;
-      this._lastSection = now;
-    }
-
-    return this;
   }
-
-  // Tempo from the spacing of recent onsets: fold intervals into one octave
-  // (300-750 ms), take the median, smooth. Falls back to 120 when starved.
-  _updateBpm() {
-    const t = this._onsetTimes;
-    if (t.length < 5) return;
-    const folded = [];
-    for (let i = 1; i < t.length; i++) {
-      let iv = t[i] - t[i - 1];
-      if (iv < 120 || iv > 3000) continue;
-      while (iv < 300) iv *= 2;
-      while (iv > 750) iv /= 2;
-      folded.push(iv);
+  class AudioEngine extends AudioAnalysis {
+    constructor() {
+      super();
+      this.ctx = null;
+      this.analyser = null;
+      this.stream = null;
+      this.source = null;
+      this.kind = "ambient";
     }
-    if (folded.length < 4) return;
-    folded.sort((a, b) => a - b);
-    const med = folded[folded.length >> 1];
-    const bpm = 60000 / med;
-    this.bpm += (Math.min(Math.max(bpm, 60), 200) - this.bpm) * 0.15;
+    get running() {
+      return !!this.analyser;
+    }
+    async attach(stream, kind = "system") {
+      this.stop();
+      if (!stream.getAudioTracks().some((t) => t.readyState === "live")) {
+        stream.getTracks().forEach((t) => t.stop());
+        throw new Error("The source did not provide an audio track.");
+      }
+      try {
+        this.stream = stream;
+        const Context = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new Context();
+        await this.ctx.resume();
+        this.analyser = this.ctx.createAnalyser();
+        this.analyser.fftSize = 4096;
+        this.analyser.smoothingTimeConstant = 0.2;
+        this.source = this.ctx.createMediaStreamSource(stream);
+        this.source.connect(this.analyser);
+        // Captured system/mic audio is never routed to speakers.
+        this.wave = new Uint8Array(this.analyser.fftSize).fill(128);
+        this.freq = new Uint8Array(this.analyser.frequencyBinCount);
+        this.kind = kind;
+      } catch (error) {
+        this.stop();
+        throw error;
+      }
+    }
+    async start(stream) {
+      return this.attach(stream);
+    }
+    async playFile(file) {
+      this.stop();
+      const Context = window.AudioContext || window.webkitAudioContext;
+      const context = (this.ctx = new Context());
+      try {
+        await context.resume();
+        const bytes = await file.arrayBuffer();
+        if (this.ctx !== context) return;
+        const buffer = await context.decodeAudioData(bytes);
+        if (this.ctx !== context) return;
+        this.analyser = context.createAnalyser();
+        this.analyser.fftSize = 4096;
+        this.analyser.smoothingTimeConstant = 0.2;
+        this.source = context.createBufferSource();
+        this.source.buffer = buffer;
+        this.source.connect(this.analyser);
+        this.analyser.connect(context.destination);
+        this.wave = new Uint8Array(this.analyser.fftSize).fill(128);
+        this.freq = new Uint8Array(this.analyser.frequencyBinCount);
+        this.kind = "file";
+        this.source.onended = () => {
+          if (this.ctx === context) {
+            this.stop();
+            this.onended?.();
+          }
+        };
+        this.source.start();
+      } catch (error) {
+        if (this.ctx === context) this.stop();
+        throw error;
+      }
+    }
+    update(dt = 1 / 60) {
+      if (!this.analyser) return this;
+      this.analyser.getByteFrequencyData(this.freq);
+      this.analyser.getByteTimeDomainData(this.wave);
+      return this.analyze(this.wave, this.freq, this.ctx.sampleRate, dt);
+    }
+    stop() {
+      if (this.source) {
+        this.source.onended = null;
+        try {
+          this.source.stop?.();
+          this.source.disconnect();
+        } catch {}
+      }
+      this.stream?.getTracks().forEach((t) => t.stop());
+      this.ctx?.close().catch(() => {});
+      this.ctx = null;
+      this.analyser = null;
+      this.source = null;
+      this.stream = null;
+      this.kind = "ambient";
+      this.reset();
+    }
   }
-}
-
-window.AudioEngine = AudioEngine;
+  const api = { AudioAnalysis, AudioEngine };
+  if (typeof window !== "undefined") Object.assign(window, api);
+  if (typeof module !== "undefined") module.exports = api;
+})();

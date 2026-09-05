@@ -22,7 +22,23 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Check audio analysis and settings
+        run: npm test
+
+      - name: Check the Electron renderer
+        run: npm run test:visual
+        env:
+          NEWON_TEST_OUTPUT: ${{ runner.temp }}/newon-visual-checks
+
+      - name: Save rendering checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Newon-rendering-checks
+          path: ${{ runner.temp }}/newon-visual-checks
+          if-no-files-found: warn
 
       - name: Generate app icon
         run: npm run build:icon
@@ -53,8 +69,7 @@ jobs:
         if: >-
           startsWith(github.ref, 'refs/tags/v') ||
           github.event_name == 'workflow_dispatch' ||
-          github.ref == 'refs/heads/main' ||
-          github.ref == 'refs/heads/claude/xbox-360-neon-visuals-3teotf'
+          github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.v }}

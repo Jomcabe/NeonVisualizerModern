@@ -1,596 +1,763 @@
-'use strict';
-
-// ---- Palettes (three neon stops each; sampled by the shaders) ----
-function hex(h) {
-  return [
-    parseInt(h.slice(1, 3), 16) / 255,
-    parseInt(h.slice(3, 5), 16) / 255,
-    parseInt(h.slice(5, 7), 16) / 255
-  ];
-}
-const PALETTES = [
-  { name: 'Xbox Neon', a: '#00e5ff', b: '#7b5cff', c: '#ff3ea5' },
-  { name: 'Aurora', a: '#16f2c8', b: '#3ad1ff', c: '#8a5cff' },
-  { name: 'Sunset', a: '#ff6b3d', b: '#ff2d78', c: '#ffd24c' },
-  { name: 'Vaporwave', a: '#ff71ce', b: '#01cdfe', c: '#b967ff' },
-  { name: 'Emerald', a: '#00ffa3', b: '#00d4ff', c: '#0affef' },
-  { name: 'Inferno', a: '#ff2200', b: '#ff9500', c: '#ffe600' },
-  { name: 'Ice', a: '#7ee8fa', b: '#eec0c6', c: '#4a90e2' }
-];
-
-const MODES = ['flight', 'neon', 'tunnel'];
-
-const state = {
-  mode: 'flight',
-  palette: 0,
-  sensitivity: 1.1,
-  brightness: 0.35,
-  bloom: 1.1,
-  trails: 0.7,
-  autoCycle: true,
-  showLyrics: true
-};
-
-const canvas = document.getElementById('gl');
-let viz, audio;
-try {
-  viz = new GLViz(canvas);
-} catch (e) {
-  showGateError(e.message);
-}
-audio = new AudioEngine();
-
-// ---- Start / audio capture -------------------------------------------------
-// macOS only shows the Screen Recording prompt when the app *actually attempts*
-// a capture, and only reports "granted" AFTER approval + relaunch. The old flow
-// checked the status first and skipped the capture unless already granted — so
-// on a fresh install the prompt never fired and Start dropped straight to the
-// mic. Now we always attempt the system-audio capture first (which fires the
-// prompt and registers Newon in System Settings), and the mic is an explicit
-// opt-in — never a silent surprise.
-const startBtn = document.getElementById('startBtn');
-const gate = document.getElementById('gate');
-const gateStart = document.getElementById('gateStart');
-const gatePerm = document.getElementById('gatePerm');
-
-startBtn.addEventListener('click', () => beginListening({ allowMic: false }));
-document.getElementById('permRetryBtn').addEventListener('click', () => beginListening({ allowMic: false }));
-document.getElementById('micFallbackBtn').addEventListener('click', () => beginListening({ allowMic: true }));
-document.getElementById('permOpenBtn').addEventListener('click', () => {
-  window.newon && window.newon.openScreenRecordingSettings();
-});
-
-async function beginListening({ allowMic }) {
-  startBtn.disabled = true;
-  startBtn.textContent = 'Connecting…';
-  hideGateError();
-
-  // getMediaAccessStatus('screen') is INFORMATIONAL ONLY. It is unreliable for
-  // ad-hoc-signed apps — it can read non-"granted" even when Screen Recording is
-  // actually on and loopback works — so it must NEVER gate a working capture.
-  // Trusting it (and a track's momentary `muted` flag) is exactly what made a
-  // genuinely granted permission look broken.
-  const access = window.newon ? await window.newon.checkScreenAccess() : 'granted';
-
-  // ALWAYS attempt the system-audio (loopback) capture — main.js supplies the
-  // screen source + audio:'loopback'. This also triggers the macOS Screen
-  // Recording prompt on first run.
-  let sysStream = null;
+"use strict";
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const { presets, palettes, defaults, settings } = window.NewonPresets;
+  let saved;
   try {
-    sysStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-  } catch (err) {
-    sysStream = null;
-  }
-  const sysTrack = sysStream && sysStream.getAudioTracks()[0];
-
-  // Accept ANY live loopback audio track. Whether audio *actually flows* is
-  // decided empirically by the probe below — not by the flaky permission API.
-  if (sysTrack && sysTrack.readyState === 'live') {
-    try {
-      await audio.start(sysStream);
-      succeed();
-      startAudioProbe();
-      return;
-    } catch (err) {
-      stopStream(sysStream);
-    }
-  } else if (sysStream) {
-    stopStream(sysStream);
-  }
-
-  // getDisplayMedia gave us nothing usable (threw, or no audio track at all).
-  // Only touch the microphone if the user explicitly asked for it.
-  if (allowMic) {
-    try {
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      await audio.start(micStream);
-      succeed();
-      showMicNotice();
-      return;
-    } catch (err) {
-      showStartCard();
-      resetStartBtn();
-      showGateError('Could not access the microphone. (' + err.message + ')');
-      return;
-    }
-  }
-
-  // Show the Screen Recording gate (with an explicit mic opt-in) instead of
-  // silently redirecting to the microphone.
-  showPermGate();
-  resetStartBtn();
-}
-
-function succeed() {
-  gate.classList.add('hidden');
-  pinGearBriefly();
-}
-function stopStream(s) { s.getTracks().forEach((t) => t.stop()); }
-function resetStartBtn() { startBtn.disabled = false; startBtn.textContent = 'Start Listening'; }
-function showStartCard() { gatePerm.classList.add('hidden'); gateStart.classList.remove('hidden'); }
-function showPermGate() { gateStart.classList.add('hidden'); gatePerm.classList.remove('hidden'); }
-function hideGateError() { document.getElementById('gate-error').classList.add('hidden'); }
-
-function showGateError(msg) {
-  const el = document.getElementById('gate-error');
-  el.textContent = msg;
-  el.classList.remove('hidden');
-}
-
-// After starting a loopback stream, verify audio ACTUALLY flows. macOS can show
-// Newon's Screen Recording checkbox as ON yet send pure silence: the grant goes
-// stale whenever the app's ad-hoc code signature changes on a rebuild/update,
-// and toggling it off/on reuses the same stale entry. REMOVING Newon from the
-// list (the "–" button) and re-adding it is what actually fixes it. If no audio
-// arrives within a few seconds, say so plainly instead of pretending it worked.
-let probe = null;
-function startAudioProbe() {
-  hidePermHint();
-  probe = { start: performance.now(), seen: false };
-}
-function checkAudioProbe() {
-  if (!probe) return;
-  if (audio.level > 0.01) {                 // real signal — it's working
+    saved = JSON.parse(localStorage.getItem("newon:4") || "null");
+  } catch {}
+  const state = settings(saved);
+  const audio = new AudioEngine(),
+    demo = new AudioAnalysis();
+  const canvas = $("gl");
+  let viz = null,
+    failed = false,
+    busy = false,
+    source = "ambient",
+    paused = false,
+    dirty = true;
+  let sceneTime = 0,
+    elapsed = 0,
+    lastFrame = performance.now(),
+    nextScene = 32,
+    hue = 0;
+  let weights = presets.map((_, i) => (i === state.preset ? 1 : 0)),
+    fadeFrom = weights.slice(),
+    fadeTime = 4;
+  let variation = 0,
+    targetVariation = 0,
+    mirror = false,
     probe = null;
-    hidePermHint();
-  } else if (performance.now() - probe.start > 6000) {
-    probe = null;
-    showStalePermBanner();
-  }
-}
-function showStalePermBanner() {
-  document.getElementById('permHint-msg').textContent =
-    'No system audio is coming through. If you just enabled Screen Recording, ' +
-    'fully quit and relaunch Newon. If it already shows enabled, the grant went ' +
-    'stale after an update — REMOVE Newon with the “–” button (toggling off/on ' +
-    'will NOT fix it), then relaunch and add it back when prompted.';
-  document.getElementById('permHint').classList.remove('hidden');
-}
-function hidePermHint() {
-  document.getElementById('permHint').classList.add('hidden');
-}
-
-// The mic is a deliberate opt-in; show a dismissible banner so it's never a
-// surprise, with a shortcut to fix Screen Recording for full system audio.
-function showMicNotice() {
-  probe = null;
-  document.getElementById('permHint-msg').textContent =
-    'Using your microphone. For Spotify audio directly, grant Newon Screen Recording and relaunch.';
-  document.getElementById('permHint').classList.remove('hidden');
-}
-// The banner's action button opens whichever Settings pane the current
-// message is about (Screen Recording by default; Automation for Spotify).
-let permHintAction = 'screen';
-document.getElementById('permHint-btn').addEventListener('click', () => {
-  if (!window.newon) return;
-  if (permHintAction === 'automation') window.newon.openAutomationSettings();
-  else window.newon.openScreenRecordingSettings();
-});
-document.getElementById('permHint-close').addEventListener('click', () => {
-  document.getElementById('permHint').classList.add('hidden');
-});
-
-// ---- Controls panel ----
-const panel = document.getElementById('panel');
-const gear = document.getElementById('gear');
-gear.addEventListener('click', () => panel.classList.toggle('hidden'));
-
-document.querySelectorAll('#modeSeg button').forEach((b) => {
-  b.addEventListener('click', () => {
-    document.querySelectorAll('#modeSeg button').forEach((x) => x.classList.remove('active'));
-    b.classList.add('active');
-    state.mode = b.dataset.mode;
-  });
-});
-
-const paletteSel = document.getElementById('paletteSel');
-PALETTES.forEach((p, i) => {
-  const opt = document.createElement('option');
-  opt.value = i;
-  opt.textContent = p.name;
-  paletteSel.appendChild(opt);
-});
-paletteSel.addEventListener('change', () => (state.palette = +paletteSel.value));
-
-bindSlider('sensitivity');
-bindSlider('brightness');
-bindSlider('bloom');
-bindSlider('trails');
-function bindSlider(id) {
-  const el = document.getElementById(id);
-  el.addEventListener('input', () => (state[id] = +el.value));
-}
-
-document.getElementById('autoCycle').addEventListener('change', (e) => (state.autoCycle = e.target.checked));
-document.getElementById('showLyrics').addEventListener('change', (e) => {
-  state.showLyrics = e.target.checked;
-  if (!state.showLyrics) lyricEl.classList.remove('show');
-});
-document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
-
-// ---- Keyboard shortcuts ----
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'c' || e.key === 'C') panel.classList.toggle('hidden');
-  else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
-  else if (e.key === ' ') { state.mode = MODES[(MODES.indexOf(state.mode) + 1) % MODES.length]; syncModeButtons(); }
-  else if (e.key === 'r' || e.key === 'R') rerollGenes(); // instant new form
-  else if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen();
-});
-function syncModeButtons() {
-  document.querySelectorAll('#modeSeg button').forEach((x) =>
-    x.classList.toggle('active', x.dataset.mode === state.mode)
-  );
-}
-function toggleFullscreen() {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen().catch(() => {});
-}
-
-// ---- Idle cursor / gear hiding ----
-let idleTimer;
-function pinGearBriefly() {
-  gear.classList.add('pinned');
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => gear.classList.remove('pinned'), 2500);
-}
-window.addEventListener('mousemove', () => {
-  document.body.classList.remove('idle');
-  pinGearBriefly();
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    document.body.classList.add('idle');
-    gear.classList.remove('pinned');
-  }, 2800);
-});
-
-// ---- Auto-cycle palettes and modes (like the original Neon) ----
-let cycleTick = 0;
-setInterval(() => {
-  if (!state.autoCycle) return;
-  cycleTick++;
-  state.palette = (state.palette + 1) % PALETTES.length;
-  paletteSel.value = state.palette;
-  // Every other tick, switch visual mode too; the feedback trails carry over,
-  // so the handoff reads as a morph rather than a hard cut.
-  if (cycleTick % 2 === 0) {
-    state.mode = MODES[(MODES.indexOf(state.mode) + 1) % MODES.length];
-    syncModeButtons();
-  }
-}, 18000);
-
-// ---- Now playing ----
-const npEl = document.getElementById('nowplaying');
-const npArt = document.getElementById('np-art');
-const npTitle = document.getElementById('np-title');
-const npArtist = document.getElementById('np-artist');
-
-let playback = { position: 0, ts: 0, playing: false, duration: 0 };
-
-if (window.newon) {
-  window.newon.onNowPlaying((info) => {
-    if (!info || !info.name) {
-      npEl.classList.remove('show');
-      playback.playing = false;
-      return;
-    }
-    npTitle.textContent = info.name;
-    npArtist.textContent = info.artist || '';
-    if (info.artUrl) {
-      npArt.src = info.artUrl;
-      npArt.style.display = '';
-    } else {
-      npArt.style.display = 'none';
-    }
-    npEl.classList.remove('hidden');
-    npEl.classList.add('show');
-    playback = {
-      position: info.position,
-      ts: info.ts,
-      playing: info.state === 'playing',
-      duration: info.duration
-    };
-  });
-
-  window.newon.onLyrics((data) => {
-    setLyrics(data && data.synced ? parseLRC(data.synced) : null);
-  });
-
-  // The Spotify now-playing read rides on the macOS Automation permission,
-  // which (like Screen Recording) is tied to the app's code signature — an
-  // update can silently revoke it. Surface the live connection state right in
-  // the settings panel, and raise the banner when macOS is the blocker.
-  let automationWarned = false;
-  window.newon.onSpotifyStatus((status) => {
-    setSpotifyState(status);
-    if (status === 'denied' && !automationWarned) {
-      automationWarned = true;
-      permHintAction = 'automation';
-      document.getElementById('permHint-msg').textContent =
-        'Newon can’t read Spotify’s now-playing info — macOS revoked its ' +
-        'Automation permission (this happens after updates). Open Automation ' +
-        'settings, turn Spotify ON under Newon, then relaunch Newon.';
-      document.getElementById('permHint').classList.remove('hidden');
-    } else if (status === 'ok' && permHintAction === 'automation') {
-      permHintAction = 'screen';
-      document.getElementById('permHint').classList.add('hidden');
-    }
-  });
-}
-
-const spState = document.getElementById('spotifyState');
-document.getElementById('spotifyFixBtn').addEventListener('click', () => {
-  window.newon && window.newon.openAutomationSettings();
-});
-function setSpotifyState(status) {
-  const fix = document.getElementById('spotifyFixBtn');
-  fix.classList.add('hidden');
-  spState.classList.remove('ok', 'bad');
-  if (status === 'ok') { spState.textContent = 'connected ✓'; spState.classList.add('ok'); }
-  else if (status === 'idle') { spState.textContent = 'connected · paused'; spState.classList.add('ok'); }
-  else if (status === 'notrunning') spState.textContent = 'open Spotify to connect';
-  else if (status === 'denied') {
-    spState.textContent = 'blocked by macOS';
-    spState.classList.add('bad');
-    fix.classList.remove('hidden');
-  } else spState.textContent = 'unavailable';
-}
-if (!window.newon) setSpotifyState('unavailable');
-
-// ---- Lyrics (synced) ----
-const lyricEl = document.getElementById('lyric');
-let lyrics = null; // sorted [{ t, text }]
-let lyricIdx = -1;
-
-function parseLRC(lrc) {
-  const out = [];
-  const re = /\[(\d+):(\d+(?:\.\d+)?)\]/g;
-  lrc.split('\n').forEach((line) => {
-    const text = line.replace(/\[[^\]]*\]/g, '').trim();
-    let m;
-    re.lastIndex = 0;
-    while ((m = re.exec(line))) {
-      const t = parseInt(m[1], 10) * 60 + parseFloat(m[2]);
-      if (text) out.push({ t, text });
-    }
-  });
-  out.sort((a, b) => a.t - b.t);
-  return out.length ? out : null;
-}
-
-function setLyrics(parsed) {
-  lyrics = parsed;
-  lyricIdx = -1;
-  lyricEl.classList.remove('show');
-}
-
-// Interpolate Spotify position between 1s polls for smooth lyric timing.
-function currentPosition() {
-  if (!playback.ts) return 0;
-  let pos = playback.position;
-  if (playback.playing) pos += (Date.now() - playback.ts) / 1000;
-  return pos;
-}
-
-function updateLyrics() {
-  if (!state.showLyrics || !lyrics || !playback.playing) {
-    if (lyricEl.classList.contains('show') && !state.showLyrics) lyricEl.classList.remove('show');
-    return;
-  }
-  const pos = currentPosition();
-  let idx = -1;
-  for (let i = 0; i < lyrics.length; i++) {
-    if (lyrics[i].t <= pos + 0.15) idx = i;
-    else break;
-  }
-  if (idx !== lyricIdx) {
-    lyricIdx = idx;
-    if (idx >= 0) {
-      const line = lyrics[idx].text;
-      // Skip blank gaps; hide during long instrumental stretches.
-      const next = lyrics[idx + 1];
-      const gap = next ? next.t - lyrics[idx].t : 4;
-      if (line && gap < 20) {
-        lyricEl.textContent = line;
-        lyricEl.classList.remove('hidden');
-        lyricEl.classList.add('show');
-      } else {
-        lyricEl.classList.remove('show');
-      }
-    } else {
-      lyricEl.classList.remove('show');
-    }
-  }
-}
-
-// ---- Visual DNA ("genes") ----
-// Every ~10-20 seconds (and occasionally right on a beat) the visual DNA
-// re-rolls: fold symmetry, Kali-fractal offsets, tunnel radius, twist, shape
-// sizes and tumbling speed, hue behaviour, ride speed. Continuous genes ease
-// toward their new targets over several seconds so the picture *morphs* into
-// each new form; the fold count snaps (a new symmetry reads as a new preset,
-// exactly how the original Neon jumps between forms). The result: the same
-// song never looks the same twice.
-function makeGenes() {
-  const r = Math.random;
-  return {
-    folds: 2 + Math.floor(r() * 5),        // 2..6-fold kaleido symmetry
-    kx: 0.45 + r() * 1.05,                 // Kali IFS offset — the fractal's
-    ky: 0.45 + r() * 1.05,                 // whole character lives in these
-    kz: 0.35 + r() * 0.85,
-    twist: (r() * 2 - 1) * 0.9,            // corkscrew along the track
-    warp: 0.2 + r() * 0.8,                 // liquid domain-warp amount
-    radius: 1.15 + r() * 1.35,             // tunnel radius
-    detail: 0.35 + r() * 1.05,             // fractal wall displacement
-    hueSpeed: 0.03 + r() * 0.10,           // slow melt, not a strobe
-    huePhase: r(),
-    shapeSize: 0.24 + r() * 0.42,          // floating-shape scale
-    spread: 1.9 + r() * 2.3,               // spacing between floating shapes
-    spin: (r() * 2 - 1) * 1.2,             // shape tumble speed/direction
-    sway: (r() * 2 - 1) * 0.45,            // extra camera roll wander
-    shake: 0.1 + r() * 0.35,               // float intensity (kept tiny)
-    speed: 1.0 + r() * 1.2                 // base ride speed
+  let noticeAction = "screen",
+    welcome = true,
+    lastInteraction = performance.now(),
+    dragging = false;
+  let pointer = [0, 0],
+    pointerTarget = [0, 0],
+    pointerStart = [0, 0],
+    dragStart = [0, 0];
+  let frames = 0,
+    fpsTime = performance.now(),
+    slowWindows = 0,
+    visualAvailable = true;
+  const demoWave = new Uint8Array(2048),
+    demoFreq = new Uint8Array(1024);
+  const drawWave = new Uint8Array(512).fill(128),
+    spectrum = new Uint8Array(256);
+  const hex = (h) =>
+    [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  const colorStops = palettes.map((p) => p.colors.map(hex));
+  const save = () => {
+    try {
+      localStorage.setItem("newon:4", JSON.stringify(state));
+    } catch {}
   };
-}
-
-const genes = makeGenes();          // eased, live values fed to the shaders
-let geneTarget = makeGenes();
-let nextRoll = 0;                   // silence fallback — music re-rolls first
-function rerollGenes() {
-  geneTarget = makeGenes();
-  genes.folds = geneTarget.folds;   // symmetry snaps — reads as a new preset
-  nextRoll = perfT() + 22 + Math.random() * 14;
-}
-function perfT() { return (performance.now() - start) / 1000; }
-
-// ---- Main loop ----
-window.addEventListener('resize', () => viz && viz.resize());
-
-const start = performance.now();
-let camDist = 0;                    // distance travelled along the ride
-let lastFrameT = 0;
-let rotDir = 1;                     // trail-spin direction (eased, not snapped)
-let rotDirTarget = 1;
-
-// ---- Motion choreography ----
-// The ride is a sequence of smooth manoeuvres, not a constant forward push:
-// cruises, rushes, slow drifts, brief BACKWARDS pulls, lazy barrel spins
-// through the tunnel, and look-around turns where the gaze wanders off the
-// track while travel continues along it. New manoeuvres are picked when the
-// music changes section (or every few seconds as a fallback), and every value
-// eases with ~2s time constants, so nothing ever snaps.
-const motion = {
-  vel: 1.5, velTarget: 1.5,         // along-track speed; negative = backwards
-  spin: 0, spinVel: 0.12, spinVelTarget: 0.12,
-  yaw: 0, yawTarget: 0,
-  pitch: 0, pitchTarget: 0,
-  next: 0
-};
-function chooseMove(t) {
-  const r = Math.random();
-  if (r < 0.14) motion.velTarget = -(0.35 + Math.random() * 0.5);   // pull back
-  else if (r < 0.34) motion.velTarget = 0.25 + Math.random() * 0.35; // slow drift
-  else motion.velTarget = 0.7 + Math.random() * 0.8;                 // cruise
-  const s = Math.random();
-  motion.spinVelTarget = s < 0.35 ? 0 : (Math.random() * 2 - 1) * 0.28;
-  motion.yawTarget = Math.random() < 0.45 ? 0 : (Math.random() * 2 - 1) * 0.3;
-  motion.pitchTarget = Math.random() < 0.55 ? 0 : (Math.random() * 2 - 1) * 0.18;
-  motion.next = t + 8 + Math.random() * 7;   // manoeuvres last, they don't churn
-}
-function frame() {
-  if (viz) {
-    viz.resize();
-    audio.update();
-    checkAudioProbe();
-    const p = PALETTES[state.palette];
-    const t = (performance.now() - start) / 1000;
-    const dt = Math.min(Math.max(t - lastFrameT, 0), 0.05);
-    lastFrameT = t;
-
-    // Mutate the DNA the way projectM does hard preset cuts: when the MUSIC
-    // changes character (a drop, a chorus, the beat coming in), the visuals
-    // morph into a new form. The timer is only a fallback for silence. The
-    // trail-spin direction may flip here too — but it EASES around, it never
-    // snaps (per-hit flipping read as jitter, not rhythm).
-    if (audio.section || t > nextRoll) {
-      rerollGenes();
-      if (Math.random() < 0.5) rotDirTarget = -rotDirTarget;
+  function notice(text, action) {
+    $("noticeText").textContent = text;
+    noticeAction = action || "screen";
+    $("noticeSettings").classList.toggle("hidden", !action || !window.newon);
+    $("notice").classList.remove("hidden");
+  }
+  function fatal(error) {
+    failed = true;
+    visualAvailable = false;
+    $("fatal").textContent = error.message || String(error);
+    $("fatal").classList.remove("hidden");
+    $("welcome").classList.add("hidden");
+    console.error(error);
+  }
+  function initViz() {
+    try {
+      viz = new GLViz(canvas);
+      viz.quality = state.quality;
+      viz.resize();
+      failed = false;
+      $("fatal").classList.add("hidden");
+    } catch (error) {
+      fatal(error);
     }
-    rotDir += (rotDirTarget - rotDir) * (1 - Math.exp(-dt * 0.6));
-    const ease = 1 - Math.exp(-dt * 0.35);  // slow, liquid morph
-    for (const k in genes) {
-      if (k !== 'folds') genes[k] += (geneTarget[k] - genes[k]) * ease;
+  }
+  initViz();
+  canvas.addEventListener("webglcontextlost", (event) => {
+    event.preventDefault();
+    visualAvailable = false;
+    if (viz) viz.lost = true;
+    notice(
+      "The graphics device paused. Newon will restore the picture when it becomes available.",
+    );
+  });
+  canvas.addEventListener("webglcontextrestored", () => {
+    initViz();
+    visualAvailable = !failed;
+    dirty = true;
+    if (!failed) $("notice").classList.add("hidden");
+  });
+  function active() {
+    lastInteraction = performance.now();
+    document.body.classList.remove("immersed");
+  }
+  function dismissWelcome() {
+    welcome = false;
+    $("welcome").classList.add("hidden");
+    active();
+  }
+  function setPanel(open) {
+    $("panel").classList.toggle("hidden", !open);
+    $("gear").setAttribute("aria-expanded", String(open));
+    active();
+    if (open) $("closePanel").focus();
+    else $("gear").focus();
+  }
+  function selectScene(index, manual = true) {
+    state.preset = (index + presets.length) % presets.length;
+    fadeFrom = weights.slice();
+    fadeTime = 0;
+    nextScene = elapsed + 32;
+    if (manual) {
+      state.autoCycle = false;
+      syncAuto();
     }
+    if (paused) {
+      weights = presets.map((_, i) => (i === state.preset ? 1 : 0));
+      fadeFrom = weights.slice();
+      fadeTime = 4;
+    }
+    syncScene();
+    save();
+    dirty = true;
+    if (manual) active();
+  }
+  function syncScene() {
+    const p = presets[state.preset];
+    $("sceneNumber").textContent =
+      String(state.preset + 1).padStart(2, "0") + " / 08";
+    $("sceneName").textContent = p.name;
+    $("sceneFamily").textContent = p.family;
+    $("sceneCount").textContent = state.preset + 1 + " / " + presets.length;
+    $("presetSel").value = state.preset;
+  }
+  function syncAuto() {
+    $("autoCycle").checked = state.autoCycle;
+    $("autoBtn").setAttribute("aria-pressed", String(state.autoCycle));
+  }
+  function toggleAuto() {
+    state.autoCycle = !state.autoCycle;
+    nextScene = elapsed + 32;
+    syncAuto();
+    save();
+    active();
+  }
+  function changeVariation() {
+    targetVariation = Math.random();
+    mirror = Math.random() > 0.5;
+    dirty = true;
+    active();
+  }
+  function setPaused(value) {
+    paused = value;
+    $("pauseBtn").textContent = paused ? "▷" : "Ⅱ";
+    $("pauseBtn").setAttribute(
+      "aria-label",
+      paused ? "Resume motion" : "Pause motion",
+    );
+    active();
+  }
+  function setSource(kind, label) {
+    source = kind;
+    probe = null;
+    const names = {
+      ambient: "Ambient",
+      demo: "Demo",
+      system: "System audio",
+      mic: "Microphone",
+      file: "Audio file",
+    };
+    $("sourceStatus").textContent = names[kind];
+    $("audioLabel").textContent = label || names[kind];
+    $("stopBtn").classList.toggle("hidden", kind === "ambient");
+    for (const k of ["system", "file", "mic", "ambient"])
+      $(k + "Btn").classList.toggle(
+        "active",
+        k === "ambient" ? kind === "demo" : k === kind,
+      );
+    if (kind !== "system") {
+      $("nowplaying").classList.add("hidden");
+      $("lyric").classList.add("hidden");
+    }
+  }
+  function stop() {
+    audio.stop();
+    demo.reset();
+    setSource("ambient", "Ambient motion · no audio input");
+    dirty = true;
+  }
+  function explore() {
+    stop();
+    setSource("demo", "Generated rhythm · no audio input");
+    dismissWelcome();
+    setPaused(false);
+  }
+  async function listen(kind) {
+    if (busy || failed) return;
+    busy = true;
+    const buttons = [
+      "startBtn",
+      "systemBtn",
+      "micBtn",
+      "fileBtn",
+      "ambientBtn",
+      "demoBtn",
+      "stopBtn",
+    ];
+    buttons.forEach((id) => ($(id).disabled = true));
+    $("notice").classList.add("hidden");
+    let stream = null;
+    try {
+      if (!navigator.mediaDevices)
+        throw new Error(
+          "Audio capture is unavailable here. Use an audio file or the demo.",
+        );
+      if (kind === "mic")
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+      else
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: 320, height: 180, frameRate: 1 },
+          audio: true,
+        });
+      if (!stream.getAudioTracks().length)
+        throw new Error(
+          window.newon
+            ? "No system audio arrived. Check Screen & System Audio Recording permission, then try again."
+            : "Choose a browser tab and enable “Share tab audio,” or open an audio file.",
+        );
+      await audio.attach(stream, kind);
+      // Keep the display track alive: stopping it can end the audio track on
+      // some platforms. No video is rendered, recorded, or sent anywhere.
+      setSource(
+        kind,
+        kind === "mic"
+          ? "Microphone · speakers are not monitored"
+          : "Listening to system audio",
+      );
+      const current = stream;
+      stream.getAudioTracks()[0].addEventListener("ended", () => {
+        if (audio.stream === current) {
+          stop();
+          notice("Audio sharing stopped. Choose a source to reconnect.");
+        }
+      });
+      dismissWelcome();
+      setPaused(false);
+      probe = { started: performance.now(), heard: false };
+    } catch (error) {
+      stream?.getTracks().forEach((t) => t.stop());
+      if (!audio.running && source !== "demo")
+        setSource("ambient", "Ambient motion · no audio input");
+      const message =
+        error.name === "NotAllowedError"
+          ? kind === "mic"
+            ? "Microphone access was not granted. You can still use a file or the demo."
+            : "Audio sharing was cancelled or permission was not granted. Try again when you are ready."
+          : error.message;
+      notice(message, kind === "system" && window.newon ? "screen" : null);
+    } finally {
+      busy = false;
+      buttons.forEach((id) => ($(id).disabled = false));
+      active();
+    }
+  }
+  async function loadFile(file) {
+    if (!file || busy || failed) return;
+    if (file.size > 250 * 1024 * 1024) {
+      notice("Choose an audio file smaller than 250 MB.");
+      return;
+    }
+    busy = true;
+    try {
+      await audio.playFile(file);
+      setSource("file", file.name);
+      dismissWelcome();
+      setPaused(false);
+      $("nowplaying").classList.remove("hidden");
+      $("np-art").classList.add("hidden");
+      $("np-title").textContent = file.name;
+      $("np-artist").textContent = "Local audio";
+    } catch (error) {
+      stop();
+      notice("Could not decode this audio file. Try MP3, WAV, or M4A.");
+    } finally {
+      busy = false;
+      $("audioFile").value = "";
+    }
+  }
+  audio.onended = () => {
+    setSource("ambient", "Track finished · choose another file");
+    $("nowplaying").classList.add("hidden");
+  };
+  $("startBtn").onclick = () => listen("system");
+  $("systemBtn").onclick = () => listen("system");
+  $("micBtn").onclick = () => listen("mic");
+  $("demoBtn").onclick = explore;
+  $("ambientBtn").onclick = () => {
+    if (!busy) explore();
+  };
+  $("stopBtn").onclick = () => {
+    if (!busy) stop();
+  };
+  for (const id of ["fileBtn", "welcomeFile"])
+    $(id).onclick = () => {
+      if (!busy) $("audioFile").click();
+    };
+  $("audioFile").onchange = () => loadFile($("audioFile").files[0]);
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    loadFile(e.dataTransfer.files[0]);
+  });
+  $("gear").onclick = () => setPanel($("panel").classList.contains("hidden"));
+  $("closePanel").onclick = () => setPanel(false);
+  $("noticeClose").onclick = () => $("notice").classList.add("hidden");
+  $("noticeSettings").onclick = () =>
+    window.newon?.[
+      noticeAction === "automation"
+        ? "openAutomationSettings"
+        : "openScreenRecordingSettings"
+    ]();
+  $("spotifyFixBtn").onclick = () => window.newon?.openAutomationSettings();
+  $("prevBtn").onclick = () => selectScene(state.preset - 1);
+  $("nextBtn").onclick = () => selectScene(state.preset + 1);
+  $("pauseBtn").onclick = () => setPaused(!paused);
+  $("autoBtn").onclick = toggleAuto;
+  $("autoCycle").onchange = toggleAuto;
+  $("fsBtn").onclick = toggleFullscreen;
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else
+      document.documentElement
+        .requestFullscreen()
+        .catch(() => notice("Fullscreen is unavailable in this window."));
+  }
+  presets.forEach((p, i) =>
+    $("presetSel").add(
+      new Option(String(i + 1).padStart(2, "0") + "  " + p.name, i),
+    ),
+  );
+  palettes.forEach((p, i) => $("paletteSel").add(new Option(p.name, i)));
+  $("presetSel").onchange = () => selectScene(Number($("presetSel").value));
+  $("paletteSel").onchange = () => {
+    state.palette = Number($("paletteSel").value);
+    save();
+    dirty = true;
+  };
+  for (const key of ["sensitivity", "brightness", "bloom", "trails", "speed"]) {
+    $(key).oninput = () => {
+      state[key] = Number($(key).value);
+      $(key + "Value").textContent = state[key].toFixed(2);
+      save();
+      dirty = true;
+      active();
+    };
+  }
+  $("showLyrics").onchange = () => {
+    state.showLyrics = $("showLyrics").checked;
+    save();
+    updateLyrics();
+  };
+  $("quality").onchange = () => {
+    state.quality = $("quality").value;
+    if (viz) {
+      viz.quality = state.quality;
+      viz.resolutionScale = 1;
+      viz.resize();
+    }
+    slowWindows = 0;
+    save();
+    dirty = true;
+  };
+  function syncControls() {
+    syncScene();
+    syncAuto();
+    $("paletteSel").value = state.palette;
+    $("quality").value = state.quality;
+    $("showLyrics").checked = state.showLyrics;
+    for (const key of [
+      "sensitivity",
+      "brightness",
+      "bloom",
+      "trails",
+      "speed",
+    ]) {
+      $(key).value = state[key];
+      $(key + "Value").textContent = state[key].toFixed(2);
+    }
+  }
+  $("resetBtn").onclick = () => {
+    Object.assign(state, defaults);
+    targetVariation = 0;
+    mirror = false;
+    pointerTarget = [0, 0];
+    paused = false;
+    selectScene(0, false);
+    syncControls();
+    setPaused(false);
+    save();
+    if (viz) {
+      viz.quality = "auto";
+      viz.resolutionScale = 1;
+      viz.resize();
+    }
+    dirty = true;
+  };
+  syncControls();
+  if (!window.newon) {
+    $("startBtn").firstChild.textContent = "Share tab audio ";
+    $("welcomeHint").textContent =
+      "The Mac app listens to system audio. In a browser, share a tab or open a file.";
+  }
+  window.addEventListener("keydown", (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (
+      ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName) &&
+      event.key !== "Escape"
+    )
+      return;
+    if (event.target.tagName === "BUTTON" && [" ", "Enter"].includes(event.key))
+      return;
+    const key = event.key.toLowerCase();
+    if ([" ", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key))
+      event.preventDefault();
+    if (key === "c") setPanel($("panel").classList.contains("hidden"));
+    else if (key === "f") toggleFullscreen();
+    else if (key === "arrowright") selectScene(state.preset + 1);
+    else if (key === "arrowleft") selectScene(state.preset - 1);
+    else if (key === "r") changeVariation();
+    else if (key === "a") toggleAuto();
+    else if (key === " ") setPaused(!paused);
+    else if (key === "escape") {
+      setPanel(false);
+      pointerTarget = [0, 0];
+    }
+    active();
+  });
+  canvas.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    dragStart = [e.clientX, e.clientY];
+    pointerStart = pointerTarget.slice();
+    canvas.setPointerCapture(e.pointerId);
+    active();
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (dragging) {
+      pointerTarget = [
+        Math.max(
+          -1,
+          Math.min(1, pointerStart[0] + (e.clientX - dragStart[0]) / 400),
+        ),
+        Math.max(
+          -1,
+          Math.min(1, pointerStart[1] + (e.clientY - dragStart[1]) / 400),
+        ),
+      ];
+      dirty = true;
+    }
+  });
+  canvas.addEventListener("pointerup", () => {
+    dragging = false;
+  });
+  canvas.addEventListener("pointercancel", () => {
+    dragging = false;
+  });
+  canvas.addEventListener("dblclick", () => {
+    pointerTarget = [0, 0];
+    dirty = true;
+  });
+  window.addEventListener("pointermove", active, { passive: true });
+  window.addEventListener("resize", () => {
+    if (viz && !failed && visualAvailable) viz.resize();
+    dirty = true;
+  });
+  document.addEventListener("visibilitychange", () => {
+    lastFrame = performance.now();
+    fpsTime = lastFrame;
+    frames = 0;
+  });
+  const gamepadButtons = new Map();
+  function gamepad(dt) {
+    const pads = navigator.getGamepads?.() || [];
+    for (const pad of pads) {
+      if (!pad || pad.mapping !== "standard") continue;
+      const old = gamepadButtons.get(pad.index) || [];
+      const pressed = (i) => pad.buttons[i]?.pressed && !old[i];
+      if (pressed(4) || pressed(14)) selectScene(state.preset - 1);
+      if (pressed(5) || pressed(15)) selectScene(state.preset + 1);
+      if (pressed(0)) changeVariation();
+      if (pressed(1)) setPanel($("panel").classList.contains("hidden"));
+      if (pressed(2)) {
+        $("paletteSel").value = state.palette =
+          (state.palette + 1) % palettes.length;
+        save();
+      }
+      if (pressed(3)) toggleAuto();
+      if (pressed(9)) setPaused(!paused);
+      const axis = (i) => (Math.abs(pad.axes[i] || 0) > 0.12 ? pad.axes[i] : 0);
+      if (axis(0) || axis(1)) {
+        pointerTarget = [
+          Math.max(-1, Math.min(1, pointerTarget[0] + axis(0) * dt)),
+          Math.max(-1, Math.min(1, pointerTarget[1] + axis(1) * dt)),
+        ];
+        active();
+      }
+      if (axis(2) || axis(3)) {
+        hue += axis(2) * dt * 0.08;
+        targetVariation = Math.max(
+          0,
+          Math.min(1, targetVariation + axis(3) * dt * 0.3),
+        );
+      }
+      gamepadButtons.set(
+        pad.index,
+        pad.buttons.map((b) => b.pressed),
+      );
+    }
+  }
+  window.addEventListener("gamepaddisconnected", (e) =>
+    gamepadButtons.delete(e.gamepad.index),
+  );
 
-    // Advance the choreography. The SONG still owns the pedal: tempo scales
-    // the cruise, loudness opens it up, kicks punch it — but the manoeuvre
-    // decides the direction and character of the motion.
-    if (audio.section || t > motion.next) chooseMove(t);
-    const mEase = 1 - Math.exp(-dt * 0.35);   // ~3s time constant — it glides
-    motion.vel += (motion.velTarget - motion.vel) * mEase;
-    motion.spinVel += (motion.spinVelTarget - motion.spinVel) * mEase;
-    motion.yaw += (motion.yawTarget - motion.yaw) * mEase * 0.7;
-    motion.pitch += (motion.pitchTarget - motion.pitch) * mEase * 0.7;
-    motion.spin += motion.spinVel * dt * (0.6 + audio.level);
-    const tempo = audio.bpm / 120;
-    // Kicks only push when travelling forward — a backwards pull should feel
-    // like being drawn back, not fought over.
-    const punch = motion.vel > 0 ? audio.bass * 1.3 + audio.beat * 0.7 : 0;
-    camDist += dt * (motion.vel * (0.7 + genes.speed * 0.35) * tempo
-                     * (0.45 + audio.level * 1.3) + punch);
-
-    viz.render(state.mode, {
-      time: t,
-      level: audio.level,
-      bass: audio.bass,
-      mid: audio.mid,
-      treble: audio.treble,
-      beat: audio.beat,
-      wave: audio.wave,
-      sensitivity: state.sensitivity,
-      brightness: state.brightness,
-      bloom: state.bloom,
-      dist: camDist,
-      gene0: [genes.folds, genes.kx, genes.ky, genes.kz],
-      gene1: [genes.twist, genes.warp, genes.radius, genes.detail],
-      gene2: [genes.hueSpeed, genes.huePhase, genes.shapeSize, genes.spread],
-      gene3: [genes.spin, genes.sway, genes.shake, 0],
-      // The rest of the song: attenuated bands + pitch/flux/onset/hat-beat.
-      aud0: [audio.subN, audio.lowMidN, audio.highMidN, audio.airN],
-      aud1: [audio.centroid, audio.flux, audio.onset, audio.trebBeat],
-      motion: [motion.spin, motion.yaw, motion.pitch, 0],
-      // Chromatic-aberration kick in the composite — the lens smears on hits.
-      shift: Math.min(audio.bass * 0.5 + audio.beat * 0.4, 1.0),
-      // Feedback-warp parameters (per frame, ~60fps). This is the heart of the
-      // Neon look. A slow zoom LFO makes the picture surge inward (>1, diving
-      // INTO the tunnel) then pull back — the rollercoaster rush — with bass and
-      // beats punching it deeper. Rotation wanders and reverses so the trails
-      // corkscrew, and a strong hue drift rainbows them (60s video-feedback).
-      // Flight supplies its own camera motion, so its feedback stays short and
-      // near-static — just enough afterglow to melt the frames together.
-      decay: state.mode === 'flight' ? 0.68 + state.trails * 0.22
-           : state.mode === 'tunnel' ? 0.70 + state.trails * 0.22
-           : 0.86 + state.trails * 0.11,
-      // Hi-hats flip the trail-spin direction (MilkDrop's rot-on-beat trick);
-      // the spin cadence itself follows the tempo.
-      rot: state.mode === 'flight'
-           ? (Math.sin(t * 0.11) * 0.004 + audio.beat * 0.004) * rotDir * tempo
-           : (Math.sin(t * 0.06) * 0.02 + Math.sin(t * 0.017) * 0.02 + audio.beat * 0.02
-             + (state.mode === 'tunnel' ? 0.012 : 0.005)) * rotDir,
-      // Base < 1 (drifting outward) + a rush LFO that periodically crosses 1.0
-      // to dive in; bass/beat pull you deeper still.
-      zoom: state.mode === 'flight'
-            ? 0.9975 - audio.beat * 0.003
-            : (state.mode === 'tunnel' ? 0.984 : 0.992)
-              + Math.sin(t * 0.13) * 0.016 - 0.006
-              - audio.bass * 0.030 - audio.beat * 0.022,
-      // Trail hues melt faster when the top end sizzles — slow base drift.
-      hueDrift: 0.012 + audio.treble * 0.04,
-      colA: hex(p.a),
-      colB: hex(p.b),
-      colC: hex(p.c)
+  // Spotify remains a native integration. Ignore metadata while using another source.
+  let playback = null,
+    lyrics = [],
+    automationWarned = false;
+  if (window.newon) {
+    window.newon.onNowPlaying((info) => {
+      playback = info && info.name ? info : null;
+      if (source !== "system") return;
+      const playing = playback && playback.state === "playing";
+      $("nowplaying").classList.toggle("hidden", !playing);
+      if (playing) {
+        $("np-title").textContent = playback.name;
+        $("np-artist").textContent = playback.artist || "";
+        const url = playback.artUrl || "";
+        $("np-art").classList.toggle("hidden", !/^https?:/.test(url));
+        if (/^https?:/.test(url)) $("np-art").src = url;
+      }
+      updateLyrics();
+    });
+    window.newon.onLyrics((data) => {
+      lyrics = parseLyrics(data?.synced || "");
+      updateLyrics();
+    });
+    window.newon.onSpotifyStatus((status) => {
+      $("spotifyState").textContent =
+        {
+          ok: "Connected",
+          idle: "Paused",
+          notrunning: "Open Spotify",
+          denied: "Permission needed",
+        }[status] || "Unavailable";
+      $("spotifyFixBtn").classList.toggle("hidden", status !== "denied");
+      if (status === "denied" && !automationWarned && source === "system") {
+        automationWarned = true;
+        notice(
+          "Allow Newon to read Spotify in macOS Automation settings to show the current track and lyrics.",
+          "automation",
+        );
+      }
     });
   }
-  updateLyrics();
+  function parseLyrics(text) {
+    const parsed = [];
+    for (const line of text.split("\n")) {
+      const words = line.replace(/\[[^\]]*\]/g, "").trim();
+      for (const m of line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g))
+        parsed.push({ time: Number(m[1]) * 60 + Number(m[2]), text: words });
+    }
+    return parsed.sort((a, b) => a.time - b.time);
+  }
+  function updateLyrics() {
+    if (
+      !state.showLyrics ||
+      source !== "system" ||
+      playback?.state !== "playing" ||
+      !lyrics.length
+    ) {
+      $("lyric").classList.add("hidden");
+      return;
+    }
+    const pos =
+      (playback.position || 0) + Math.max(0, (Date.now() - playback.ts) / 1000);
+    let current = null;
+    for (const line of lyrics) {
+      if (line.time > pos) break;
+      current = line;
+    }
+    const text = current && pos - current.time < 12 ? current.text : "";
+    $("lyric").textContent = text;
+    $("lyric").classList.toggle("hidden", !text);
+  }
+  function demoSignal(dt) {
+    const t = elapsed,
+      pulse = Math.exp(-(((t * 104) / 60) % 1) * 9),
+      hat = Math.exp(-(((t * 104) / 30) % 1) * 18);
+    for (let i = 0; i < demoWave.length; i++) {
+      const a = (i / demoWave.length) * Math.PI * 2;
+      demoWave[i] =
+        128 +
+        Math.sin(a * 8) * pulse * 42 +
+        Math.sin(a * 29 + t) * 14 +
+        Math.sin(a * 63) * hat * 8;
+    }
+    for (let i = 0; i < demoFreq.length; i++) {
+      const b = Math.exp(-(((i - 5) / 5) ** 2)) * pulse * 200;
+      const m =
+        Math.exp(-(((i - 45 - 10 * Math.sin(t)) / 30) ** 2)) *
+        (80 + 25 * Math.sin(t * 0.7));
+      const h = Math.exp(-(((i - 270) / 150) ** 2)) * hat * 100;
+      demoFreq[i] = Math.min(255, b + m + h);
+    }
+    return demo.analyze(demoWave, demoFreq, 44100, dt);
+  }
+  function prepareTextures(signal) {
+    const wave = signal.wave,
+      freq = signal.freq;
+    let start = 0;
+    for (let i = 1; i < Math.min(256, wave.length - 1024); i++)
+      if (wave[i - 1] < 128 && wave[i] >= 128) {
+        start = i;
+        break;
+      }
+    for (let i = 0; i < 512; i++) {
+      const j = Math.min(wave.length - 2, start + i * 2);
+      drawWave[i] = (wave[j] + wave[j + 1]) * 0.5;
+    }
+    for (let i = 0; i < 256; i++) {
+      const hz = 30 * Math.pow(16000 / 30, i / 255),
+        index = Math.round(
+          (hz / ((audio.ctx?.sampleRate || 44100) / 2)) * freq.length,
+        );
+      spectrum[i] = freq[Math.min(freq.length - 1, index)] || 0;
+    }
+  }
+  function frame(now) {
+    requestAnimationFrame(frame);
+    const dt = Math.min(0.05, Math.max(0.001, (now - lastFrame) / 1000));
+    lastFrame = now;
+    if (document.hidden) return;
+    audio.update(dt);
+    const signal = source === "demo" ? demoSignal(dt) : audio;
+    if (probe) {
+      if (audio.level > 0.012) probe = null;
+      else if (now - probe.started > 9000) {
+        probe = null;
+        notice(
+          "No audio is arriving yet. Start some music and check the selected source. If it stays silent, reconnect or check macOS audio permissions.",
+          source === "system" && window.newon ? "screen" : null,
+        );
+      }
+    }
+    if (!paused) elapsed += dt;
+    gamepad(dt);
+    if (!paused && state.autoCycle && elapsed >= nextScene)
+      selectScene((state.preset + 1) % presets.length, false);
+    if (
+      !paused &&
+      state.autoCycle &&
+      signal.section &&
+      elapsed > nextScene - 10
+    )
+      selectScene((state.preset + 1) % presets.length, false);
+    if (
+      !paused &&
+      now - lastInteraction > 3500 &&
+      !welcome &&
+      $("panel").classList.contains("hidden") &&
+      $("notice").classList.contains("hidden") &&
+      !document.querySelector("button:focus-visible")
+    )
+      document.body.classList.add("immersed");
+    for (const [id, value] of [
+      ["meterBass", signal.bassN],
+      ["meterMid", signal.midN],
+      ["meterTreble", signal.trebleN],
+    ])
+      $(id).style.setProperty("--level", Math.round(value * 100) + "%");
+    updateLyrics();
+    if (!viz || failed || !visualAvailable || (paused && !dirty)) return;
+    const advance = paused ? 0 : dt;
+    sceneTime += advance * state.speed * (0.82 + signal.level * 0.35);
+    hue += advance * 0.012;
+    variation += (targetVariation - variation) * (1 - Math.exp(-advance * 0.6));
+    for (let i = 0; i < 2; i++)
+      pointer[i] += (pointerTarget[i] - pointer[i]) * (1 - Math.exp(-dt * 4));
+    fadeTime = Math.min(4, fadeTime + advance);
+    const mix = fadeTime / 4,
+      fade = mix * mix * (3 - 2 * mix);
+    weights = fadeFrom.map(
+      (w, i) => w * (1 - fade) + (i === state.preset ? fade : 0),
+    );
+    const blend = (key) =>
+      presets.reduce((sum, p, i) => sum + p[key] * weights[i], 0);
+    prepareTextures(signal);
+    const gain = state.sensitivity;
+    try {
+      viz.render({
+        time: sceneTime,
+        dt,
+        bass: Math.min(1, signal.bassN * gain),
+        mid: Math.min(1, signal.midN * gain),
+        treble: Math.min(1, signal.trebleN * gain),
+        beat: signal.beat,
+        level: signal.level,
+        wave: drawWave,
+        spectrum,
+        pointer,
+        hue,
+        palette: palettes[state.palette],
+        colors: colorStops[state.palette],
+        layers: presets.map((p, i) => ({
+          preset: { ...p, variation: (p.variation + variation) % 1 },
+          weight: weights[i],
+        })),
+        decay: Math.min(0.978, blend("decay") + (state.trails - 0.65) * 0.075),
+        zoom: blend("zoom") * (0.7 + signal.bassN * gain * 0.45),
+        rotation: blend("rotation") * (0.8 + signal.midN * gain * 0.3),
+        warp: blend("warp") * (0.8 + signal.flux * gain * 0.4),
+        mirror,
+        bloom: state.bloom,
+        brightness: state.brightness,
+      });
+      dirty = false;
+    } catch (error) {
+      fatal(error);
+      return;
+    }
+    frames++;
+    if (now - fpsTime >= 2000) {
+      const fps = Math.round((frames * 1000) / (now - fpsTime));
+      fpsTime = now;
+      frames = 0;
+      $("fpsLabel").textContent =
+        fps + " fps · " + canvas.width + " × " + canvas.height;
+      if (state.quality === "auto" && fps < 36 && !paused) slowWindows++;
+      else slowWindows = 0;
+      if (slowWindows >= 3 && viz.resolutionScale > 0.62) {
+        viz.resolutionScale *= 0.82;
+        viz.resize();
+        slowWindows = 0;
+      }
+    }
+  }
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+    setPaused(true);
   requestAnimationFrame(frame);
-}
-requestAnimationFrame(frame);
+  window.addEventListener("beforeunload", () => {
+    audio.stop();
+    viz?.dispose();
+  });
+})();

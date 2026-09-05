@@ -1,7 +1,7 @@
 {
   "name": "newon",
   "productName": "Newon",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Newon — a modern, neon music visualizer for macOS that listens to whatever you're playing (Spotify) and paints it in flowing light. Inspired by the Xbox 360 'Neon' visualizer.",
   "main": "src/main.js",
   "author": "jomcabe",
@@ -12,6 +12,9 @@
     "url": "https://github.com/jomcabe/neonvisualizermodern.git"
   },
   "scripts": {
+    "dev": "node scripts/preview.js",
+    "test": "node --test tests/*.test.js",
+    "test:visual": "electron scripts/test-electron.js",
     "start": "electron .",
     "build:icon": "node scripts/gen-icon.js",
     "dist": "npm run build:icon && electron-builder --mac dmg",
@@ -38,13 +41,19 @@
     "mac": {
       "category": "public.app-category.music",
       "target": [
-        { "target": "dmg", "arch": ["universal"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
       ],
       "icon": "build/icon.png",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "identity": null,
       "extendInfo": {
+        "NSAudioCaptureUsageDescription": "Newon analyzes system audio locally to animate the visualizer.",
         "NSMicrophoneUsageDescription": "Newon can use your microphone as a fallback source to react to music playing nearby.",
         "NSScreenCaptureUsageDescription": "Newon captures your Mac's system audio so it can react to the music you're playing (for example, Spotify).",
         "NSAppleEventsUsageDescription": "Newon reads the currently playing track from Spotify to show a subtle now-playing overlay and synced lyrics."
@@ -53,8 +62,17 @@
     "dmg": {
       "title": "Install Newon",
       "contents": [
-        { "x": 140, "y": 200, "type": "file" },
-        { "x": 400, "y": 200, "type": "link", "path": "/Applications" }
+        {
+          "x": 140,
+          "y": 200,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     }
   }
